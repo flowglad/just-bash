@@ -1,0 +1,41 @@
+name: Flowglad Consumability
+
+on:
+  push:
+    branches: [flowglad-main]
+  pull_request:
+    branches: [flowglad-main]
+
+jobs:
+  consumability:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build package
+        run: pnpm --filter just-bash build
+
+      - name: Typecheck package
+        run: pnpm --filter just-bash typecheck
+
+      - name: Focused patched-behavior tests
+        run: pnpm --filter just-bash exec vitest run src/commands/sqlite3/sqlite3.test.ts src/commands/python3/python3.optin.test.ts
+
+      - name: Package-root consumability smoke
+        run: node scripts/flowglad-consumability-smoke.mjs "file:$PWD/packages/just-bash"

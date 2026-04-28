@@ -6,8 +6,9 @@
 > We carry three patches that fix issues encountered while embedding just-bash
 > in our reasoning agent. Each patch lives at TypeScript-source level on the
 > `flowglad-main` branch (this repo's default) and is reflected in the
-> committed `dist/`. Releases are tagged `v<upstream>-fgp.<n>` (e.g.
-> `v2.14.0-fgp.1`) — consumers should pin a tag, not the branch.
+> committed `dist/`. Consumers must pin a package-root tag named
+> `v<upstream>-fgp.<n>` (for example, `v2.14.3-fgp.1`), not the branch and not a
+> monorepo-root tag.
 >
 > | Patch | What it fixes | Upstream PR |
 > | --- | --- | --- |
@@ -18,11 +19,23 @@
 > ### Syncing from upstream
 >
 > ```bash
-> git fetch upstream && git merge upstream/main && pnpm build && git add -f packages/just-bash/dist && git commit -m "sync: upstream <sha>" && git tag v<upstream>-fgp.<n>
+> git fetch upstream
+> git merge upstream/main
+> pnpm install --frozen-lockfile
+> pnpm --filter just-bash build
+> pnpm --filter just-bash typecheck
+> pnpm --filter just-bash exec vitest run src/commands/sqlite3/sqlite3.test.ts src/commands/python3/python3.optin.test.ts
+> git add packages/just-bash/package.json packages/just-bash/src packages/just-bash/vendor
+> git add -f packages/just-bash/dist
+> git commit -m "sync: upstream <sha>"
+> pnpm flowglad:tag -- --tag v<upstream>-fgp.<n> --push
 > ```
 >
-> See `docs/SYNC.md` (added in Patch 4) for the manual fallback procedure when the
-> automated cron-polled GitHub Action can't merge cleanly.
+> `pnpm flowglad:tag` is the only supported way to publish a consumable tag. It
+> refuses dirty worktrees, requires the tag name to match the package version,
+> creates a `packages/just-bash` subtree tag, embeds a hydrated CPython WASM blob
+> when the subtree contains a Git LFS pointer, and runs a clean Bun install smoke
+> before publishing. See `docs/FLOWGLAD_RELEASE.md` for the full procedure.
 
 This repository hosts the [`just-bash`](./packages/just-bash) package and its examples.
 
