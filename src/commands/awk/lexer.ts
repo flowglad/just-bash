@@ -217,6 +217,9 @@ export class AwkLexer {
     // Newline
     if (ch === "\n") {
       this.advance();
+      if (this.lastTokenType === TokenType.COMMA) {
+        return this.nextToken();
+      }
       return {
         type: TokenType.NEWLINE,
         value: "\n",
