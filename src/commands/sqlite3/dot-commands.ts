@@ -143,6 +143,13 @@ async function translateDotCommand(
 ): Promise<{ sql: string; quit?: true } | { error: string }> {
   const [head, ...rest] = tokens;
 
+  // The caller's guard (`/^\.[a-zA-Z]/`) ensures non-empty tokens in
+  // practice, but make the assumption explicit so a future caller change
+  // can't produce confusing "unknown command: undefined" errors.
+  if (!head) {
+    return { error: "Error: empty dot-command" };
+  }
+
   if (UNSUPPORTED_DOT_COMMANDS.has(head)) {
     return {
       error: `Error: ${head} is not supported by just-bash sqlite3`,
