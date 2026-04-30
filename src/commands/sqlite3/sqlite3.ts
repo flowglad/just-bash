@@ -534,7 +534,8 @@ export const sqlite3Command: Command = {
       };
     }
 
-    // Get SQL from argument or stdin, prepend -init then -cmd if provided
+    // Get SQL from argument or stdin. Prepend -cmd first, then -init on top,
+    // so the final execution order is: init content -> cmd -> main SQL.
     let sql = sqlArg || ctx.stdin.trim();
     if (options.cmd) {
       sql = options.cmd + (sql ? `; ${sql}` : "");
@@ -663,7 +664,6 @@ export const sqlite3Command: Command = {
     }
 
     // Process results
-    let hadError = false;
     for (const stmtResult of result.results) {
       if (stmtResult.type === "error") {
         if (options.bail) {
@@ -674,7 +674,6 @@ export const sqlite3Command: Command = {
           };
         }
         stdout += `Error: ${stmtResult.error}\n`;
-        hadError = true;
       } else if (stmtResult.columns && stmtResult.rows) {
         if (stmtResult.rows.length > 0 || options.header) {
           stdout += formatOutput(
@@ -707,7 +706,10 @@ export const sqlite3Command: Command = {
     }
 
     const stderr = dotError ? `${dotError}\n` : "";
-    const exitCode = (hadError && options.bail) || dotError ? 1 : 0;
+    // dotError always causes exit 1 (matches real sqlite3).
+    // hadError without -bail doesn't (pre-existing behaviour preserved);
+    // hadError with -bail already returned early in the loop above.
+    const exitCode = dotError !== undefined ? 1 : 0;
     return { stdout, stderr, exitCode };
   },
 };

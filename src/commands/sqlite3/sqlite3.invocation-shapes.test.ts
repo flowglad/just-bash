@@ -74,11 +74,13 @@ describe("sqlite3 invocation shapes", () => {
     it("schema + INSERTs piped from a workspace .sql file", async () => {
       const env = new Bash();
       const write = await env.exec(
-        "printf 'CREATE TABLE vendor_spend (vendor TEXT, amount_cents INTEGER);\\nINSERT INTO vendor_spend VALUES (\"acme\", 1000);\\nINSERT INTO vendor_spend VALUES (\"globex\", 2500);\\n' > /workspace/load.sql",
+        'printf \'CREATE TABLE vendor_spend (vendor TEXT, amount_cents INTEGER);\\nINSERT INTO vendor_spend VALUES ("acme", 1000);\\nINSERT INTO vendor_spend VALUES ("globex", 2500);\\n\' > /workspace/load.sql',
       );
       expect(write.exitCode).toBe(0);
 
-      const load = await env.exec("sqlite3 /out/report.db < /workspace/load.sql");
+      const load = await env.exec(
+        "sqlite3 /out/report.db < /workspace/load.sql",
+      );
       expect(load.stdout).toBe("");
       expect(load.stderr).toBe("");
       expect(load.exitCode).toBe(0);
@@ -118,7 +120,7 @@ describe("sqlite3 invocation shapes", () => {
     });
   });
 
-  describe("S7: command substitution sqlite3 <db> \"$(cat file.sql)\"", () => {
+  describe('S7: command substitution sqlite3 <db> "$(cat file.sql)"', () => {
     it("reads SQL via $(cat ...) and runs it", async () => {
       const env = new Bash();
       const write = await env.exec(
@@ -206,9 +208,7 @@ describe("sqlite3 invocation shapes", () => {
         expect(r.stderr).toBe("");
         expect(r.exitCode).toBe(0);
       }
-      const result = await env.exec(
-        'sqlite3 /loop.db "SELECT SUM(x) FROM t"',
-      );
+      const result = await env.exec('sqlite3 /loop.db "SELECT SUM(x) FROM t"');
       expect(result.stdout).toBe("6\n");
       expect(result.exitCode).toBe(0);
     });

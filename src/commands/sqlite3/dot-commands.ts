@@ -189,7 +189,9 @@ async function translateDotCommand(
       } else if (v === "off" || v === "false" || v === "0") {
         mutation.header = false;
       } else {
-        return { error: `Error: unknown argument to ${head}: ${rest[0] ?? ""}` };
+        return {
+          error: `Error: unknown argument to ${head}: ${rest[0] ?? ""}`,
+        };
       }
       return { sql: "" };
     }
@@ -279,14 +281,18 @@ async function preprocessDotCommandsInternal(
 
   for (const rawLine of lines) {
     const trimmed = rawLine.trim();
-    if (!trimmed.startsWith(".")) {
+    if (trimmed.startsWith("--") || !trimmed.startsWith(".")) {
       outLines.push(rawLine);
       continue;
     }
     const tokens = tokenizeDotCommand(trimmed);
     const result = await translateDotCommand(tokens, mutation, ctx);
     if ("error" in result) {
-      return { sql: outLines.join("\n"), formatterMutation: mutation, error: result.error };
+      return {
+        sql: outLines.join("\n"),
+        formatterMutation: mutation,
+        error: result.error,
+      };
     }
     if (result.sql.length > 0) {
       // Ensure dot-translated SQL is its own statement
