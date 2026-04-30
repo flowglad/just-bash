@@ -569,7 +569,7 @@ export const sqlite3Command: Command = {
         fs: ctx.fs,
         cwd: ctx.cwd,
       });
-      sql = pre.sql;
+      sql = pre.sql.trim();
       if (pre.formatterMutation.mode !== undefined)
         options.mode = pre.formatterMutation.mode;
       if (pre.formatterMutation.header !== undefined)
@@ -583,6 +583,17 @@ export const sqlite3Command: Command = {
       dotError = pre.error;
       if (dotError && options.bail) {
         return { stdout: "", stderr: `${dotError}\n`, exitCode: 1 };
+      }
+      // Pure formatter mutations / dot-commands with no SQL: short-circuit
+      // instead of sending whitespace to the worker. Real sqlite3 emits
+      // nothing in this case.
+      if (!sql) {
+        const stderr = dotError ? `${dotError}\n` : "";
+        return {
+          stdout: "",
+          stderr,
+          exitCode: dotError !== undefined ? 1 : 0,
+        };
       }
     }
 
