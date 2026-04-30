@@ -555,9 +555,11 @@ export const sqlite3Command: Command = {
       }
     }
     // Only error when no SQL source was provided at all. An empty -init
-    // file (or empty stdin/sqlArg) with nothing else is a clean exit 0,
-    // matching real sqlite3.
-    if (!sql && !options.init && !sqlArg && !ctx.stdin.trim()) {
+    // file (or explicitly empty stdin/sqlArg) with nothing else is a clean
+    // exit 0, matching real sqlite3. sqlArg/options.init are typed as
+    // `string | null`, so test for absence with `=== null` rather than
+    // falsiness (an explicit empty string is "provided but empty").
+    if (!sql && options.init === null && sqlArg === null && !ctx.stdin.trim()) {
       return {
         stdout: "",
         stderr: "sqlite3: no SQL provided\n",
