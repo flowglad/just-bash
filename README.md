@@ -16,6 +16,18 @@
 > | `awk-comma-continuation` | The bundled awk lexer emits a `NEWLINE` token after a trailing comma, breaking POSIX comma-continuation in scripts our agent runs. | _filed in Patch 2_ |
 > | `jq-permissive-control-chars` | The bundled jq input scanner calls `JSON.parse` on raw bytes that may contain literal control characters (which Shopify's Admin API responses do), failing parse. We sanitize the slice before parsing. | _filed in Patch 2_ |
 >
+> ### Releasing
+>
+> Tags are cut automatically. Any push to `flowglad-main` that touches
+> `packages/just-bash/**` triggers `.github/workflows/auto-tag.yml`, which
+> computes the next `v<package-version>-fgp.<n>` (incrementing `<n>` from the
+> highest existing tag for that version), runs `pnpm flowglad:tag --push`,
+> and — if the `PROVISIONING_AGENT_PR_TOKEN` secret is set — opens a PR to
+> `flowglad/provisioning-agent` updating the pinned `just-bash` dependency to
+> the new tag. Add `[skip auto-tag]` to a commit message to opt out, or use
+> the workflow's `workflow_dispatch` trigger with a `tag_override` input to
+> force a specific tag.
+>
 > ### Syncing from upstream
 >
 > ```bash
@@ -28,14 +40,16 @@
 > git add packages/just-bash/package.json packages/just-bash/src packages/just-bash/vendor
 > git add -f packages/just-bash/dist
 > git commit -m "sync: upstream <sha>"
-> pnpm flowglad:tag -- --tag v<upstream>-fgp.<n> --push
+> git push origin flowglad-main
 > ```
 >
-> `pnpm flowglad:tag` is the only supported way to publish a consumable tag. It
-> refuses dirty worktrees, requires the tag name to match the package version,
-> creates a `packages/just-bash` subtree tag, embeds a hydrated CPython WASM blob
-> when the subtree contains a Git LFS pointer, and runs a clean Bun install smoke
-> before publishing. See `docs/FLOWGLAD_RELEASE.md` for the full procedure.
+> Pushing the sync commit lets `auto-tag.yml` cut the next tag. `pnpm
+> flowglad:tag` is still the underlying mechanism — it refuses dirty worktrees,
+> requires the tag name to match the package version, creates a
+> `packages/just-bash` subtree tag, embeds a hydrated CPython WASM blob when the
+> subtree contains a Git LFS pointer, and runs a clean Bun install smoke before
+> publishing. Run it locally for emergency / out-of-band releases. See
+> `docs/FLOWGLAD_RELEASE.md` for the full procedure.
 
 This repository hosts the [`just-bash`](./packages/just-bash) package and its examples.
 
