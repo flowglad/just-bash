@@ -203,10 +203,10 @@ async function translateDotCommand(
         return { error: `Error: unknown mode: ${m ?? ""}` };
       }
       mutation.mode = m as OutputMode;
-      // Real sqlite3 also flips the separator for some modes
-      if (m === "csv") mutation.separator = ",";
-      else if (m === "tabs") mutation.separator = "\t";
-      else if (m === "list") mutation.separator = "|";
+      // Do NOT touch mutation.separator here — real sqlite3 keeps .separator
+      // independent of .mode (csv/tabs hardcode their separators in the
+      // formatter; list reads from options.separator). Mutating separator
+      // here would clobber an explicit .separator that ran earlier.
       return { sql: "" };
     }
     case ".separator": {
