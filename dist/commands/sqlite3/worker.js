@@ -1540,6 +1540,15 @@ function wrapWasmCallback(component, phase, callback) {
 
 // src/commands/sqlite3/worker.ts
 var cachedSQL = null;
+function coerceDbBuffer(raw) {
+  if (raw instanceof Uint8Array) {
+    return raw;
+  }
+  if (raw && typeof raw.byteLength === "number" && raw.byteLength > 0) {
+    return new Uint8Array(raw);
+  }
+  return null;
+}
 var defense = null;
 function wrapWorkerMessage(protocolToken, message) {
   const wrapped = /* @__PURE__ */ Object.create(null);
@@ -1805,11 +1814,8 @@ async function executeQuery(data) {
   let db;
   try {
     const SQL = await initializeWithDefense(data.protocolToken);
-    if (data.dbBuffer) {
-      db = new SQL.Database(data.dbBuffer);
-    } else {
-      db = new SQL.Database();
-    }
+    const buf = coerceDbBuffer(data.dbBuffer);
+    db = buf ? new SQL.Database(buf) : new SQL.Database();
   } catch (e) {
     const message = sanitizeHostErrorMessage(e.message);
     return {
@@ -1881,3 +1887,6 @@ if (parentPort && workerData) {
     });
   });
 }
+export {
+  coerceDbBuffer
+};
