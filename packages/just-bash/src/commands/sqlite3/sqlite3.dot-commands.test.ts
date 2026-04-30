@@ -35,9 +35,7 @@ describe("sqlite3 dot-commands", () => {
       await env.exec(
         "sqlite3 /db.sqlite 'CREATE TABLE orders(id INT); CREATE TABLE order_items(id INT); CREATE TABLE refunds(id INT)'",
       );
-      const result = await env.exec(
-        "sqlite3 /db.sqlite \".tables 'order%'\"",
-      );
+      const result = await env.exec("sqlite3 /db.sqlite \".tables 'order%'\"");
       expect(result.stdout).toBe("order_items\norders\n");
       expect(result.exitCode).toBe(0);
     });
@@ -91,7 +89,7 @@ describe("sqlite3 dot-commands", () => {
     it(".header (singular) is an alias", async () => {
       const env = new Bash();
       await env.exec(
-        "sqlite3 /db.sqlite \"CREATE TABLE t(x INT); INSERT INTO t VALUES (42)\"",
+        'sqlite3 /db.sqlite "CREATE TABLE t(x INT); INSERT INTO t VALUES (42)"',
       );
       const script = `.header on\nSELECT * FROM t`;
       const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
@@ -224,9 +222,7 @@ EOF`,
   });
 
   describe("D8: .import (unsupported)", () => {
-    it.todo(
-      "loads CSV into a table — see github issue: not yet implemented",
-    );
+    it.todo("loads CSV into a table — see github issue: not yet implemented");
   });
 
   describe("D9: .dump (unsupported)", () => {

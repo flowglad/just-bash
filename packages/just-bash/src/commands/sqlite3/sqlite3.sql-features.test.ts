@@ -170,7 +170,7 @@ EOF`,
         "sqlite3 /db.sqlite \"CREATE TABLE orders(status TEXT, amount INT); INSERT INTO orders VALUES ('paid', 100), ('refunded', 50), ('paid', 200);\"",
       );
       const result = await env.exec(
-        'sqlite3 -header /db.sqlite "SELECT SUM(CASE WHEN status=\'paid\' THEN amount ELSE 0 END) AS revenue, SUM(CASE WHEN status=\'refunded\' THEN amount ELSE 0 END) AS refunds FROM orders"',
+        "sqlite3 -header /db.sqlite \"SELECT SUM(CASE WHEN status='paid' THEN amount ELSE 0 END) AS revenue, SUM(CASE WHEN status='refunded' THEN amount ELSE 0 END) AS refunds FROM orders\"",
       );
       expect(result.stdout).toBe("revenue|refunds\n300|50\n");
       expect(result.exitCode).toBe(0);
@@ -228,7 +228,7 @@ EOF`,
     it("CREATE VIEW + SELECT through it", async () => {
       const env = new Bash();
       await env.exec(
-        "sqlite3 /db.sqlite \"CREATE TABLE t(x INT); INSERT INTO t VALUES (1),(2),(3); CREATE VIEW v AS SELECT x*x AS sq FROM t\"",
+        'sqlite3 /db.sqlite "CREATE TABLE t(x INT); INSERT INTO t VALUES (1),(2),(3); CREATE VIEW v AS SELECT x*x AS sq FROM t"',
       );
       const result = await env.exec(
         'sqlite3 /db.sqlite "SELECT sq FROM v ORDER BY sq"',

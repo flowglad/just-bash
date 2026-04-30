@@ -51,9 +51,7 @@ EOF`,
     it("missing argument errors", async () => {
       const env = new Bash();
       const result = await env.exec("sqlite3 -init");
-      expect(result.stderr).toBe(
-        "sqlite3: Error: missing argument to -init\n",
-      );
+      expect(result.stderr).toBe("sqlite3: Error: missing argument to -init\n");
       expect(result.exitCode).toBe(1);
     });
   });
@@ -61,9 +59,7 @@ EOF`,
   describe("X2: -batch", () => {
     it("is accepted as a no-op (just-bash is always non-interactive)", async () => {
       const env = new Bash();
-      const result = await env.exec(
-        'sqlite3 -batch :memory: "SELECT 1"',
-      );
+      const result = await env.exec('sqlite3 -batch :memory: "SELECT 1"');
       expect(result.stdout).toBe("1\n");
       expect(result.stderr).toBe("");
       expect(result.exitCode).toBe(0);
@@ -72,7 +68,7 @@ EOF`,
     it("can be combined with other flags", async () => {
       const env = new Bash();
       const result = await env.exec(
-        'sqlite3 -batch -header :memory: "CREATE TABLE t(name TEXT); INSERT INTO t VALUES (\'a\'); SELECT * FROM t"',
+        "sqlite3 -batch -header :memory: \"CREATE TABLE t(name TEXT); INSERT INTO t VALUES ('a'); SELECT * FROM t\"",
       );
       expect(result.stdout).toBe("name\na\n");
       expect(result.exitCode).toBe(0);
