@@ -48,12 +48,13 @@ jobs:
 
       - name: Compute next tag
         id: tag
+        env:
+          TAG_OVERRIDE: ${{ inputs.tag_override }}
         run: |
           set -euo pipefail
-          OVERRIDE="${{ inputs.tag_override }}"
-          if [ -n "$OVERRIDE" ]; then
-            echo "Using override tag: $OVERRIDE"
-            echo "tag=$OVERRIDE" >> "$GITHUB_OUTPUT"
+          if [ -n "${TAG_OVERRIDE:-}" ]; then
+            echo "Using override tag: ${TAG_OVERRIDE}"
+            echo "tag=${TAG_OVERRIDE}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           VERSION=$(node -p "require('./packages/just-bash/package.json').version")
@@ -73,7 +74,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Cut and push tag
-        run: pnpm flowglad:tag -- --tag "${{ steps.tag.outputs.tag }}" --push
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: pnpm flowglad:tag -- --tag "$TAG" --push
 
       - name: Bump just-bash dependency in flowglad/provisioning-agent
         env:
@@ -133,9 +136,15 @@ jobs:
 
       - name: Summarize
         if: always()
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          TRIGGER: ${{ github.event_name }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
-          echo "## Auto-tag run" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Tag: \`${{ steps.tag.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Trigger: ${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Source commit: ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Auto-tag run"
+            echo ""
+            echo "- Tag: \`${TAG}\`"
+            echo "- Trigger: ${TRIGGER}"
+            echo "- Source commit: ${SOURCE_SHA}"
+          } >> "$GITHUB_STEP_SUMMARY"
