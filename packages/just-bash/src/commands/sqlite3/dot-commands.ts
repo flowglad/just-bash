@@ -283,7 +283,15 @@ async function preprocessDotCommandsInternal(
 
   for (const rawLine of lines) {
     const trimmed = rawLine.trim();
-    if (trimmed.startsWith("--") || !trimmed.startsWith(".")) {
+    // Only treat lines starting with `.` followed by a letter as
+    // dot-commands. SQL line comments (`-- ...`) and SQL fragments that
+    // happen to start with `.` followed by a digit (e.g. a numeric
+    // continuation `.5`) are passed through unchanged.
+    if (
+      trimmed.startsWith("--") ||
+      !trimmed.startsWith(".") ||
+      !/^\.[a-zA-Z]/.test(trimmed)
+    ) {
       outLines.push(rawLine);
       continue;
     }
