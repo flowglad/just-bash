@@ -554,7 +554,10 @@ export const sqlite3Command: Command = {
         };
       }
     }
-    if (!sql) {
+    // Only error when no SQL source was provided at all. An empty -init
+    // file (or empty stdin/sqlArg) with nothing else is a clean exit 0,
+    // matching real sqlite3.
+    if (!sql && !options.init && !sqlArg && !ctx.stdin.trim()) {
       return {
         stdout: "",
         stderr: "sqlite3: no SQL provided\n",
