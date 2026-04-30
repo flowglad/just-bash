@@ -540,7 +540,11 @@ export const sqlite3Command: Command = {
     if (options.cmd) {
       sql = options.cmd + (sql ? `; ${sql}` : "");
     }
-    if (options.init) {
+    // `options.init` is `string | null`. Use `!== null` (not falsiness) so
+    // `-init ""` attempts the read and surfaces a clear error, instead of
+    // silently skipping. This matches the no-SQL guard below, which also
+    // treats an explicit empty string as "provided".
+    if (options.init !== null) {
       try {
         const initPath = ctx.fs.resolvePath(ctx.cwd, options.init);
         const initContent = await ctx.fs.readFile(initPath);
