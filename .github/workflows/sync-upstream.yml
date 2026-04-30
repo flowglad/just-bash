@@ -1,0 +1,79 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: flowglad-main
+          fetch-depth: 0
+          lfs: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name "flowglad-sync[bot]"
+          git config user.email "flowglad-sync@users.noreply.github.com"
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Run upstream sync
+        id: sync
+        run: bash scripts/sync-upstream.sh
+
+      - name: Ensure sync labels exist
+        if: steps.sync.outputs.status == 'clean' || steps.sync.outputs.status == 'conflicts'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create ready-for-merge \
+            --color 0e8a16 \
+            --description "Auto-sync PR with clean merge + green build" \
+            --force
+          gh label create needs-conflict-resolution \
+            --color d93f0b \
+            --description "Auto-sync PR with merge conflicts" \
+            --force
+
+      - name: Push sync branch and open PR
+        if: steps.sync.outputs.status == 'clean' || steps.sync.outputs.status == 'conflicts'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.sync.outputs.sync_branch }}
+          STATUS: ${{ steps.sync.outputs.status }}
+          UPSTREAM: ${{ steps.sync.outputs.latest_upstream }}
+        run: |
+          git push -u origin "${BRANCH}"
+
+          if [ "${STATUS}" = "clean" ]; then
+            label="ready-for-merge"
+            body=$'Automated upstream sync to '"${UPSTREAM}"$'.\n\nSource merge clean; pnpm install, build, typecheck, and focused patched-behavior tests all passed. After merge, cut the next Flowglad package-root tag with `pnpm flowglad:tag --tag v'"${UPSTREAM#v}"$'-fgp.<n> --push`.'
+          else
+            label="needs-conflict-resolution"
+            body=$'Automated upstream sync to '"${UPSTREAM}"$' has merge conflicts.\n\nCheck out this branch, resolve conflicts at TypeScript-source level, then run:\n\n```\npnpm install\npnpm --filter just-bash build\npnpm --filter just-bash typecheck\npnpm --filter just-bash exec vitest run src/commands/sqlite3/sqlite3.test.ts src/commands/python3/python3.optin.test.ts\ngit add -f packages/just-bash/dist\n```\n\nCommit and push to update this PR.'
+          fi
+
+          gh pr create \
+            --base flowglad-main \
+            --head "${BRANCH}" \
+            --title "sync: upstream ${UPSTREAM}" \
+            --body "${body}" \
+            --label "${label}"
