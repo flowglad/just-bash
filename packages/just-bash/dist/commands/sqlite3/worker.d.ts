@@ -13,6 +13,19 @@
  * 3. Execute phase: User SQL runs with all dangerous globals blocked
  */
 import { type WorkerDefenseStats } from "../../security/index.js";
+/**
+ * Coerce a host-supplied dbBuffer into the form sql.js expects.
+ *
+ * Why: Bun's worker_threads structured-clone has regressed across versions
+ * (notably the build shipped in Trigger.dev's container) and surfaces a
+ * host-side `null` dbBuffer as a zero-length ArrayBuffer here. A truthy
+ * empty ArrayBuffer would slip past `if (data.dbBuffer)` and reach
+ * `new SQL.Database(arrayBuffer)`, which throws "Expected ArrayBuffer for
+ * the first argument" (sql.js wants Uint8Array, not bare ArrayBuffer).
+ * Treat empty/non-Uint8Array values as "no buffer" → fresh in-memory db,
+ * matching the host's intent for :memory: databases.
+ */
+export declare function coerceDbBuffer(raw: unknown): Uint8Array | null;
 export interface WorkerInput {
     protocolToken: string;
     dbBuffer: Uint8Array | null;
