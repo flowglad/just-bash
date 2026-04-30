@@ -277,4 +277,52 @@ EOF`,
       expect(result.exitCode).toBe(0);
     });
   });
+
+  describe(".quit / .exit", () => {
+    it(".quit stops processing — SQL after it is dropped", async () => {
+      const env = new Bash();
+      await env.exec(
+        "sqlite3 /db.sqlite 'CREATE TABLE t(x INT); INSERT INTO t VALUES (1)'",
+      );
+      const script = `SELECT * FROM t;\n.quit\nDROP TABLE t`;
+      const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
+      expect(result.stdout).toBe("1\n");
+      expect(result.exitCode).toBe(0);
+      const after = await env.exec(
+        "sqlite3 /db.sqlite \"SELECT name FROM sqlite_master WHERE type='table'\"",
+      );
+      expect(after.stdout).toBe("t\n");
+    });
+
+    it(".exit behaves the same as .quit", async () => {
+      const env = new Bash();
+      await env.exec("sqlite3 /db.sqlite 'CREATE TABLE t(x INT)'");
+      const script = `.exit\nDROP TABLE t`;
+      const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
+      expect(result.exitCode).toBe(0);
+      const after = await env.exec(
+        "sqlite3 /db.sqlite \"SELECT name FROM sqlite_master WHERE type='table'\"",
+      );
+      expect(after.stdout).toBe("t\n");
+    });
+
+    it(".quit inside a .read'd file stops the outer script too", async () => {
+      const env = new Bash();
+      await env.exec("sqlite3 /db.sqlite 'CREATE TABLE t(x INT)'");
+      await env.exec(
+        `cat > /workspace/mid.sql <<'EOF'
+INSERT INTO t VALUES (1);
+.quit
+INSERT INTO t VALUES (2);
+EOF`,
+      );
+      const script = `.read /workspace/mid.sql\nINSERT INTO t VALUES (3)`;
+      const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
+      expect(result.exitCode).toBe(0);
+      const after = await env.exec(
+        'sqlite3 /db.sqlite "SELECT x FROM t ORDER BY x"',
+      );
+      expect(after.stdout).toBe("1\n");
+    });
+  });
 });

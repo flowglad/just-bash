@@ -82,6 +82,8 @@ export interface PreprocessResult {
   formatterMutation: FormatterMutation;
   /** First error encountered, if any. */
   error?: string;
+  /** Set when .quit/.exit was encountered; everything after is dropped. */
+  quit?: true;
 }
 
 interface PreprocessCtx {
@@ -130,13 +132,15 @@ function escapeSqlLiteral(s: string): string {
 
 /**
  * Translate a single dot-command to SQL or a formatter mutation.
- * Returns the SQL replacement (may be empty string for pure mutations) or an error.
+ * Returns the SQL replacement (may be empty string for pure mutations),
+ * a quit signal (.quit/.exit, possibly with trailing SQL from .read),
+ * or an error.
  */
 async function translateDotCommand(
   tokens: string[],
   mutation: FormatterMutation,
   ctx: PreprocessCtx,
-): Promise<{ sql: string } | { error: string }> {
+): Promise<{ sql: string; quit?: true } | { error: string }> {
   const [head, ...rest] = tokens;
 
   if (UNSUPPORTED_DOT_COMMANDS.has(head)) {
@@ -243,15 +247,16 @@ async function translateDotCommand(
         depth: ctx.depth + 1,
       });
       if (sub.error) return { error: sub.error };
-      return { sql: sub.sql };
+      // Propagate the quit signal: a .quit inside the read'd file should
+      // stop the parent from processing anything that came after .read.
+      return sub.quit ? { sql: sub.sql, quit: true } : { sql: sub.sql };
     }
     case ".quit":
     case ".exit": {
-      // Best-effort: stop processing here. Caller respects truncation by
-      // wrapping the rest in a no-op SELECT? Simpler: just emit empty SQL
-      // and let any later statements run. Real CLI would exit; we don't
-      // since we're already a one-shot.
-      return { sql: "" };
+      // Stop processing further input. Real sqlite3 exits immediately on
+      // .quit; we approximate by dropping everything that follows from
+      // the SQL we emit to the worker.
+      return { sql: "", quit: true };
     }
     case ".help":
     case ".show":
@@ -314,6 +319,13 @@ async function preprocessDotCommandsInternal(
       for (const line of withSemi.split("\n")) {
         outLines.push(line);
       }
+    }
+    if (result.quit) {
+      return {
+        sql: outLines.join("\n"),
+        formatterMutation: mutation,
+        quit: true,
+      };
     }
   }
 
