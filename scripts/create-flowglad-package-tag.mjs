@@ -91,7 +91,16 @@ if (currentBranch !== branch) {
   );
 }
 
-const status = run("git", ["status", "--porcelain"], { capture: true });
+// `-c core.fileMode=false` so executable-bit flips don't show up here. esbuild
+// emits dist/bin/*.js at mode 100644 on Linux, but those files were originally
+// committed at 100755 (and macOS preserves that on rebuild), so a CI rebuild
+// would otherwise look like a "dirty worktree" or "validation changed files"
+// even when no content changed.
+const status = run(
+  "git",
+  ["-c", "core.fileMode=false", "status", "--porcelain"],
+  { capture: true },
+);
 if (status) {
   throw new Error(`Refusing to release with a dirty worktree:\n${status}`);
 }
@@ -143,9 +152,11 @@ if (!skipValidation) {
     "src/commands/python3/python3.optin.test.ts",
   ]);
 
-  const postValidationStatus = run("git", ["status", "--porcelain"], {
-    capture: true,
-  });
+  const postValidationStatus = run(
+    "git",
+    ["-c", "core.fileMode=false", "status", "--porcelain"],
+    { capture: true },
+  );
   if (postValidationStatus) {
     throw new Error(
       `Validation changed files. Commit the build output first, then rerun:\n${postValidationStatus}`,
