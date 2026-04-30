@@ -148,9 +148,11 @@ async function translateDotCommand(
   switch (head) {
     case ".tables": {
       const pat = rest[0];
+      // Use '~' as ESCAPE char to avoid the JS-template-literal -> SQL
+      // double-escape ambiguity that '\\' creates.
       const where = pat
-        ? `type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' AND name LIKE '${escapeSqlLiteral(pat)}'`
-        : `type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'`;
+        ? `type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' AND name LIKE '${escapeSqlLiteral(pat)}'`
+        : `type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~'`;
       return {
         sql: `SELECT name FROM sqlite_master WHERE ${where} ORDER BY name`,
       };
@@ -295,9 +297,15 @@ async function preprocessDotCommandsInternal(
       };
     }
     if (result.sql.length > 0) {
-      // Ensure dot-translated SQL is its own statement
+      // Ensure dot-translated SQL is its own statement. .read produces
+      // multi-line output; split so each line becomes its own outLines
+      // entry rather than a single multi-line element (keeps the
+      // outLines.join("\n") at the end behaving uniformly).
       const stmt = result.sql.trim();
-      outLines.push(stmt.endsWith(";") ? stmt : `${stmt};`);
+      const withSemi = stmt.endsWith(";") ? stmt : `${stmt};`;
+      for (const line of withSemi.split("\n")) {
+        outLines.push(line);
+      }
     }
   }
 
