@@ -27,6 +27,7 @@ import { _clearTimeout, _setTimeout } from "../../timers.js";
 import type { Command, CommandContext, ExecResult } from "../../types.js";
 import { hasHelpFlag, showHelp } from "../help.js";
 
+import { preprocessDotCommands } from "./dot-commands.js";
 import {
   type FormatOptions,
   formatOutput,
@@ -68,6 +69,8 @@ const sqlite3Help = {
     "-bail           stop on first error",
     "-echo           print SQL before execution",
     "-cmd COMMAND    run SQL command before main SQL",
+    "-init FILENAME  read/process named file before main SQL",
+    "-batch          accept-and-ignore (just-bash is always non-interactive)",
     "-version        show SQLite version",
     "--              end of options",
     "--help          show this help",
@@ -90,6 +93,7 @@ interface SqliteOptions {
   bail: boolean;
   echo: boolean;
   cmd: string | null;
+  init: string | null;
 }
 
 function parseArgs(args: string[]):
@@ -110,6 +114,7 @@ function parseArgs(args: string[]):
     bail: false,
     echo: false,
     cmd: null,
+    init: null,
   };
 
   let database: string | null = null;
@@ -187,6 +192,17 @@ function parseArgs(args: string[]):
         };
       }
       options.cmd = args[++i];
+    } else if (arg === "-init") {
+      if (i + 1 >= args.length) {
+        return {
+          stdout: "",
+          stderr: "sqlite3: Error: missing argument to -init\n",
+          exitCode: 1,
+        };
+      }
+      options.init = args[++i];
+    } else if (arg === "-batch") {
+      // No-op: just-bash is never interactive, so -batch is implied.
     } else if (arg.startsWith("-")) {
       // Real sqlite3 treats --xyz as -xyz and says "unknown option: -xyz"
       const optName = arg.startsWith("--") ? arg.slice(1) : arg;
@@ -518,10 +534,24 @@ export const sqlite3Command: Command = {
       };
     }
 
-    // Get SQL from argument or stdin, prepend -cmd if provided
+    // Get SQL from argument or stdin, prepend -init then -cmd if provided
     let sql = sqlArg || ctx.stdin.trim();
     if (options.cmd) {
       sql = options.cmd + (sql ? `; ${sql}` : "");
+    }
+    if (options.init) {
+      try {
+        const initPath = ctx.fs.resolvePath(ctx.cwd, options.init);
+        const initContent = await ctx.fs.readFile(initPath);
+        sql = initContent + (sql ? `\n${sql}` : "");
+      } catch (e) {
+        const message = sanitizeErrorMessage((e as Error).message);
+        return {
+          stdout: "",
+          stderr: `sqlite3: cannot open -init file "${options.init}": ${message}\n`,
+          exitCode: 1,
+        };
+      }
     }
     if (!sql) {
       return {
@@ -529,6 +559,30 @@ export const sqlite3Command: Command = {
         stderr: "sqlite3: no SQL provided\n",
         exitCode: 1,
       };
+    }
+
+    // Preprocess dot-commands (.tables, .schema, .mode, .read, ...)
+    let dotError: string | undefined;
+    {
+      const pre = await preprocessDotCommands(sql, {
+        fs: ctx.fs,
+        cwd: ctx.cwd,
+      });
+      sql = pre.sql;
+      if (pre.formatterMutation.mode !== undefined)
+        options.mode = pre.formatterMutation.mode;
+      if (pre.formatterMutation.header !== undefined)
+        options.header = pre.formatterMutation.header;
+      if (pre.formatterMutation.separator !== undefined)
+        options.separator = pre.formatterMutation.separator;
+      if (pre.formatterMutation.newline !== undefined)
+        options.newline = pre.formatterMutation.newline;
+      if (pre.formatterMutation.nullValue !== undefined)
+        options.nullValue = pre.formatterMutation.nullValue;
+      dotError = pre.error;
+      if (dotError && options.bail) {
+        return { stdout: "", stderr: `${dotError}\n`, exitCode: 1 };
+      }
     }
 
     // Load database buffer
@@ -652,7 +706,9 @@ export const sqlite3Command: Command = {
       }
     }
 
-    return { stdout, stderr: "", exitCode: hadError && options.bail ? 1 : 0 };
+    const stderr = dotError ? `${dotError}\n` : "";
+    const exitCode = (hadError && options.bail) || dotError ? 1 : 0;
+    return { stdout, stderr, exitCode };
   },
 };
 
