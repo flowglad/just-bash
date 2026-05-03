@@ -12,7 +12,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import initSqlJs from "sql.js";
@@ -21,6 +21,7 @@ import { bindDefenseContextCallback } from "../../security/defense-context.js";
 import { DefenseInDepthBox } from "../../security/defense-in-depth-box.js";
 import { _clearTimeout, _setTimeout } from "../../timers.js";
 import { hasHelpFlag, showHelp } from "../help.js";
+import { preprocessDotCommands } from "./dot-commands.js";
 import { formatOutput, } from "./formatters.js";
 /** Default query timeout in milliseconds (5 seconds) */
 const DEFAULT_QUERY_TIMEOUT_MS = 5000;
@@ -50,6 +51,8 @@ const sqlite3Help = {
         "-bail           stop on first error",
         "-echo           print SQL before execution",
         "-cmd COMMAND    run SQL command before main SQL",
+        "-init FILENAME  read/process named file before main SQL",
+        "-batch          accept-and-ignore (just-bash is always non-interactive)",
         "-version        show SQLite version",
         "--              end of options",
         "--help          show this help",
@@ -72,6 +75,7 @@ function parseArgs(args) {
         bail: false,
         echo: false,
         cmd: null,
+        init: null,
     };
     let database = null;
     let sql = null;
@@ -169,6 +173,19 @@ function parseArgs(args) {
             }
             options.cmd = args[++i];
         }
+        else if (arg === "-init") {
+            if (i + 1 >= args.length) {
+                return {
+                    stdout: "",
+                    stderr: "sqlite3: Error: missing argument to -init\n",
+                    exitCode: 1,
+                };
+            }
+            options.init = args[++i];
+        }
+        else if (arg === "-batch") {
+            // No-op: just-bash is never interactive, so -batch is implied.
+        }
         else if (arg.startsWith("-")) {
             // Real sqlite3 treats --xyz as -xyz and says "unknown option: -xyz"
             const optName = arg.startsWith("--") ? arg.slice(1) : arg;
@@ -204,28 +221,44 @@ async function getSqliteVersion() {
 }
 /**
  * Find the sqlite3 worker.js file path.
- * Checks multiple locations for different environments:
- * - dist/commands/sqlite3/worker.js (production, bundled)
- * - ./worker.js (development from dist/)
- * - ../../../dist/commands/sqlite3/worker.js (tests from src/)
+ *
+ * The worker is shipped via two routes by `build:worker`:
+ *   - `dist/bin/chunks/sqlite3-worker.js` and `dist/bundle/chunks/sqlite3-worker.js`
+ *     (uniquely named so it never collides with `chunks/worker.js`, which is python3's worker)
+ *   - `dist/commands/sqlite3/worker.js` (also listed in package.json `files`)
+ *
+ * Resolution order is deliberate: the uniquely-named chunk is checked first so
+ * that a bundled build never falls back to a sibling `worker.js` belonging to
+ * a different command. The `<currentDir>/worker.js` lookup is gated on the
+ * directory actually being `commands/sqlite3` to prevent any future
+ * silent-misfire if a chunks dir grows a `worker.js` named after another
+ * command.
+ *
+ * Locations checked, in order:
+ *   1. `<currentDir>/sqlite3-worker.js`                       — bundled (chunks dirs)
+ *   2. `<currentDir>/../../commands/sqlite3/worker.js`        — bundled (chunks dir → tarball commands tree)
+ *   3. `<currentDir>/worker.js`                               — non-bundled dist; only when currentDir is `commands/sqlite3`
+ *   4. `<currentDir>/../../../dist/commands/sqlite3/worker.js` — tests from TS source
+ *
+ * Exposed via `_internals.findWorkerPath` so tests can pass a synthetic dir.
  */
-function findWorkerPath() {
-    const currentDir = dirname(fileURLToPath(import.meta.url));
-    // For bundled builds, go up to find dist/commands/sqlite3/worker.js
-    // This handles both dist/bin/chunks/ and dist/bundle/chunks/ cases
-    const bundledPath = join(currentDir, "../../commands/sqlite3/worker.js");
-    if (existsSync(bundledPath)) {
-        return bundledPath;
+function findWorkerPath(currentDir = dirname(fileURLToPath(import.meta.url))) {
+    const candidates = [
+        join(currentDir, "sqlite3-worker.js"),
+        join(currentDir, "../../commands/sqlite3/worker.js"),
+    ];
+    // Only trust a bare `worker.js` sibling when we are actually located inside
+    // the sqlite3 command directory. This prevents the historical bug where
+    // `dist/bundle/chunks/worker.js` (python3's worker) was silently picked up.
+    if (currentDir.endsWith(`${sep}commands${sep}sqlite3`) ||
+        currentDir.endsWith("/commands/sqlite3")) {
+        candidates.push(join(currentDir, "worker.js"));
     }
-    // For non-bundled dist (e.g., dist/commands/sqlite3/sqlite3.js)
-    const distPath = join(currentDir, "worker.js");
-    if (existsSync(distPath)) {
-        return distPath;
-    }
-    // For tests running from TypeScript source
-    const srcToDistPath = join(currentDir, "../../../dist/commands/sqlite3/worker.js");
-    if (existsSync(srcToDistPath)) {
-        return srcToDistPath;
+    candidates.push(join(currentDir, "../../../dist/commands/sqlite3/worker.js"));
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+            return candidate;
+        }
     }
     throw new Error("sqlite3 worker not found. Run 'pnpm build' to compile the worker.");
 }
@@ -234,6 +267,7 @@ export const _internals = {
     createWorker(workerPath, input) {
         return new Worker(workerPath, { workerData: input });
     },
+    findWorkerPath,
 };
 function generateWorkerProtocolToken() {
     return randomBytes(16).toString("hex");
@@ -420,17 +454,76 @@ export const sqlite3Command = {
                 exitCode: 1,
             };
         }
-        // Get SQL from argument or stdin, prepend -cmd if provided
+        // Get SQL from argument or stdin. Prepend -cmd first, then -init on top,
+        // so the final execution order is: init content -> cmd -> main SQL.
         let sql = sqlArg || ctx.stdin.trim();
         if (options.cmd) {
             sql = options.cmd + (sql ? `; ${sql}` : "");
         }
-        if (!sql) {
+        // `options.init` is `string | null`. Use `!== null` (not falsiness) so
+        // `-init ""` attempts the read and surfaces a clear error, instead of
+        // silently skipping. This matches the no-SQL guard below, which also
+        // treats an explicit empty string as "provided".
+        if (options.init !== null) {
+            try {
+                const initPath = ctx.fs.resolvePath(ctx.cwd, options.init);
+                const initContent = await ctx.fs.readFile(initPath);
+                sql = initContent + (sql ? `\n${sql}` : "");
+            }
+            catch (e) {
+                const message = sanitizeErrorMessage(e.message);
+                return {
+                    stdout: "",
+                    stderr: `sqlite3: cannot open -init file "${options.init}": ${message}\n`,
+                    exitCode: 1,
+                };
+            }
+        }
+        // Only error when no SQL source was provided at all. An empty -init
+        // file (or explicitly empty stdin/sqlArg) with nothing else is a clean
+        // exit 0, matching real sqlite3. sqlArg/options.init are typed as
+        // `string | null`, so test for absence with `=== null` rather than
+        // falsiness (an explicit empty string is "provided but empty").
+        if (!sql && options.init === null && sqlArg === null && !ctx.stdin.trim()) {
             return {
                 stdout: "",
                 stderr: "sqlite3: no SQL provided\n",
                 exitCode: 1,
             };
+        }
+        // Preprocess dot-commands (.tables, .schema, .mode, .read, ...)
+        let dotError;
+        {
+            const pre = await preprocessDotCommands(sql, {
+                fs: ctx.fs,
+                cwd: ctx.cwd,
+            });
+            sql = pre.sql.trim();
+            if (pre.formatterMutation.mode !== undefined)
+                options.mode = pre.formatterMutation.mode;
+            if (pre.formatterMutation.header !== undefined)
+                options.header = pre.formatterMutation.header;
+            if (pre.formatterMutation.separator !== undefined)
+                options.separator = pre.formatterMutation.separator;
+            if (pre.formatterMutation.newline !== undefined)
+                options.newline = pre.formatterMutation.newline;
+            if (pre.formatterMutation.nullValue !== undefined)
+                options.nullValue = pre.formatterMutation.nullValue;
+            dotError = pre.error;
+            if (dotError && options.bail) {
+                return { stdout: "", stderr: `${dotError}\n`, exitCode: 1 };
+            }
+            // Pure formatter mutations / dot-commands with no SQL: short-circuit
+            // instead of sending whitespace to the worker. Real sqlite3 emits
+            // nothing in this case.
+            if (!sql) {
+                const stderr = dotError ? `${dotError}\n` : "";
+                return {
+                    stdout: "",
+                    stderr,
+                    exitCode: dotError !== undefined ? 1 : 0,
+                };
+            }
         }
         // Load database buffer
         const isMemory = database === ":memory:";
@@ -498,7 +591,6 @@ export const sqlite3Command = {
             stdout += `${sql}\n`;
         }
         // Process results
-        let hadError = false;
         for (const stmtResult of result.results) {
             if (stmtResult.type === "error") {
                 if (options.bail) {
@@ -509,7 +601,6 @@ export const sqlite3Command = {
                     };
                 }
                 stdout += `Error: ${stmtResult.error}\n`;
-                hadError = true;
             }
             else if (stmtResult.columns && stmtResult.rows) {
                 if (stmtResult.rows.length > 0 || options.header) {
@@ -535,7 +626,12 @@ export const sqlite3Command = {
                 };
             }
         }
-        return { stdout, stderr: "", exitCode: hadError && options.bail ? 1 : 0 };
+        const stderr = dotError ? `${dotError}\n` : "";
+        // dotError always causes exit 1 (matches real sqlite3).
+        // hadError without -bail doesn't (pre-existing behaviour preserved);
+        // hadError with -bail already returned early in the loop above.
+        const exitCode = dotError !== undefined ? 1 : 0;
+        return { stdout, stderr, exitCode };
     },
 };
 export const flagsForFuzzing = {

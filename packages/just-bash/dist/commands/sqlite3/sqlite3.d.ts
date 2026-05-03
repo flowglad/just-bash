@@ -16,6 +16,7 @@ import type { WorkerInput } from "./worker.js";
 /** @internal Exposed for testing only */
 export declare const _internals: {
     createWorker(workerPath: string, input: WorkerInput): Worker;
+    findWorkerPath(currentDir?: string): string;
 };
 export declare const sqlite3Command: Command;
 import type { CommandFuzzInfo } from "../fuzz-flags-types.js";
