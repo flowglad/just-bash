@@ -75,43 +75,26 @@ EOF`,
     });
   });
 
-  describe("interplay: -init + dot-commands", () => {
-    it("init.sql can itself contain (drop-list) dot-commands without breaking", async () => {
-      // .headers / .timer / .changes are silent-drop metacommands — they
-      // must not fail the init pass, and the init's other SQL must run.
+  describe("interplay: -init + .read + dot-commands", () => {
+    it("init.sql can itself contain dot-commands", async () => {
       const env = new Bash();
       await env.exec(
-        `cat > /workspace/init.sql <<'EOF'
-.headers on
-.timer off
-CREATE TABLE seeded(x INT);
-INSERT INTO seeded VALUES (100);
+        `cat > /workspace/sub.sql <<'EOF'
+CREATE TABLE sub(x INT);
+INSERT INTO sub VALUES (100);
 EOF`,
       );
-      const result = await env.exec(
-        'sqlite3 -init /workspace/init.sql /db.sqlite "SELECT x FROM seeded"',
-      );
-      expect(result.stdout).toBe("100\n");
-      expect(result.exitCode).toBe(0);
-    });
-
-    it("init.sql with a .read inside emits the in-band actionable message", async () => {
-      // .read is intentionally not implemented in the sandbox — agents
-      // should pipe with `cat … | sqlite3 …` instead. The init pass
-      // surfaces the hint via stdout (exit 0) rather than failing.
-      const env = new Bash();
       await env.exec(
         `cat > /workspace/init.sql <<'EOF'
 .read /workspace/sub.sql
+.headers on
 EOF`,
       );
       const result = await env.exec(
-        'sqlite3 -init /workspace/init.sql :memory: "SELECT 1"',
+        'sqlite3 -init /workspace/init.sql /db.sqlite "SELECT x FROM sub"',
       );
+      expect(result.stdout).toBe("x\n100\n");
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain(".read is not supported");
-      expect(result.stdout).toContain("cat /workspace/sub.sql");
-      expect(result.stdout).toContain("1\n");
     });
   });
 });
