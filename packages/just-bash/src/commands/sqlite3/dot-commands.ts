@@ -4,8 +4,9 @@
  * Real sqlite3's CLI accepts dot-commands (`.tables`, `.schema`, `.mode csv`,
  * `.read script.sql`, etc.) interleaved with SQL. The sql.js engine doesn't
  * implement these — they're a feature of the CLI, not the library — so we
- * translate them to equivalent SQL or drop them before handing the script
- * to the worker.
+ * translate them to equivalent SQL, mutate formatter state, recursively
+ * inline `.read`'d files, or surface errors before handing the script to
+ * the worker.
  *
  * Scanner: char-level, with state for SQL string literals (`'…'`, `"…"`
  * including the SQL doubled-quote escape `''` / `""`), line comments
@@ -16,45 +17,70 @@
  * `.headers on; .mode csv; CREATE TABLE…;` be three separate tokens
  * on a single line.
  *
- * Each recognized dot-command resolves to one of four outcomes:
+ * Each recognized dot-command resolves to one of these outcomes:
  *
  *   1. SQL replacement — emit equivalent SQL in the dot-command's place.
  *      Used for: .tables, .schema, .indexes/.indices, .databases (sqlite_master
- *      queries / PRAGMA), .help (a SELECT of the help text), and the
- *      "not-supported" family (.read, .dump, .save, .import, .backup,
- *      .restore, .open, .shell, .system, .iotrace, .log, .cd, .load,
- *      .excel, .clone, .output) which become `SELECT '…' AS error;` so
- *      callers see the message in script-order on stdout instead of an
- *      out-of-band exit.
+ *      queries / PRAGMA) and .help (a SELECT of the help text). Also used
+ *      for the recursively-inlined contents of a successful `.read FILE`.
  *
- *   2. Silent drop — recognize and discard, surrounding SQL still runs.
- *      Used for: .headers/.header, .mode, .separator, .nullvalue, .echo,
- *      .timer, .changes, .bail, .show, .eqp, .width, .prompt, .print,
- *      .explain. The CLI exposes `-header`, `-csv`, `-separator`, etc.
- *      for mid-stream formatter changes, so the metacommand form is a
- *      no-op rather than driving formatter state from inside the SQL.
+ *   2. Formatter mutation — adjust output state for downstream SQL.
+ *      Used for: .headers/.header (on/off), .mode <mode>, .separator <s>
+ *      [<row>], .nullvalue <text>. Bad arguments surface a preprocessor
+ *      error matching real sqlite3's wording (e.g. "Error: unknown mode:
+ *      parquet"). Last write wins within a single invocation.
  *
- *   3. Quit — .quit / .exit terminate preprocessing; anything after them
- *      (in the current input or in a future .read'd file, were that
- *      supported) is dropped.
+ *   3. Silent drop — recognize and discard, surrounding SQL still runs.
+ *      Used for the no-op metacommands the sandbox doesn't implement
+ *      (.echo, .timer, .changes, .bail, .show, .eqp, .width, .prompt,
+ *      .print, .explain).
  *
- *   4. Passthrough — unknown dot-commands are left in place verbatim,
+ *   4. .read FILE — open the file, recursively run the same scanner on
+ *      its contents (sharing the formatter mutation and bumping depth),
+ *      and splice the result into the output stream. Missing files,
+ *      missing arguments, or exceeding MAX_READ_DEPTH surface a
+ *      preprocessor error.
+ *
+ *   5. .quit / .exit — terminate preprocessing; anything after them is
+ *      dropped (including in a parent scanner that called us through
+ *      `.read`).
+ *
+ *   6. Not-implemented family — .dump, .save, .backup, .import, .clone,
+ *      .restore, .open, .output, .shell, .system, .cd, .load, .iotrace,
+ *      .log, .excel translate to a `SELECT 'Error: …' AS error;` so the
+ *      message rides in stdout in script-order without aborting the
+ *      surrounding SQL. We don't implement these, but agents reach for
+ *      them and an actionable hint is friendlier than a syntax error.
+ *
+ *   7. Passthrough — unknown dot-commands are left in place verbatim,
  *      so sql.js produces its native "near \".\": syntax error" rather
  *      than us inventing a CLI-shaped error message.
  *
- * Pattern handling: `.tables PAT` and `.schema PAT` and `.indexes PAT`
- * convert shell-glob `*`/`?` to SQL `%`/`_` so `.tables user*` matches
- * the way agents expect.
+ * Pattern handling: `.tables PAT`, `.schema PAT`, `.indexes PAT` convert
+ * shell-glob `*`/`?` to SQL `%`/`_` so `.tables user*` matches the way
+ * agents expect.
  */
 
+import { sanitizeErrorMessage } from "../../fs/sanitize-error.js";
 import type { CommandContext } from "../../types.js";
+import type { OutputMode } from "./formatters.js";
+
+const VALID_MODES: ReadonlySet<string> = new Set([
+  "list",
+  "csv",
+  "json",
+  "line",
+  "column",
+  "table",
+  "markdown",
+  "tabs",
+  "box",
+  "quote",
+  "html",
+  "ascii",
+]);
 
 const SILENT_DROP_COMMANDS: ReadonlySet<string> = new Set([
-  ".headers",
-  ".header",
-  ".mode",
-  ".separator",
-  ".nullvalue",
   ".echo",
   ".timer",
   ".changes",
@@ -67,25 +93,49 @@ const SILENT_DROP_COMMANDS: ReadonlySet<string> = new Set([
   ".explain",
 ]);
 
+const MAX_READ_DEPTH = 8;
+
 const HELP_TEXT =
   "Supported dot commands: .tables [PAT], .schema [PAT], .indexes [TBL] (alias .indices), .databases, .help. " +
+  "Formatter state: .headers/.header on|off, .mode <list|csv|json|line|column|table|markdown|tabs|box|quote|html|ascii>, .separator <SEP> [<ROW>], .nullvalue <TEXT>. " +
+  "File inlining: .read FILE (recursive). " +
   "Stops processing: .quit / .exit. " +
-  "Silently dropped (use the matching CLI flag instead): .headers, .header, .mode, .separator, .nullvalue, .echo, .timer, .changes, .bail, .show, .eqp, .width, .prompt, .print, .explain. " +
-  "Unsupported (use shell pipes/redirects instead): .read, .dump, .save, .import, .backup, .restore, .open, .shell, .system, .iotrace, .log, .cd, .load, .excel, .clone, .output. " +
+  "Silent no-ops: .echo / .timer / .changes / .bail / .show / .eqp / .width / .prompt / .print / .explain. " +
+  "Not implemented: .dump / .save / .backup / .import / .clone / .restore / .open / .output / .shell / .system / .cd / .load / .iotrace / .log / .excel (each emits an actionable error). " +
   "Unknown commands fall through to sql.js for a native syntax error.";
+
+export interface FormatterMutation {
+  mode?: OutputMode;
+  header?: boolean;
+  separator?: string;
+  newline?: string;
+  nullValue?: string;
+}
 
 export interface PreprocessResult {
   /** SQL with dot-commands replaced by equivalent SQL or dropped. */
   sql: string;
+  /** Accumulated formatter state from .mode / .headers / .separator / .nullvalue. */
+  formatterMutation: FormatterMutation;
+  /** First dot-command error encountered; preprocessing stops at that point. */
+  error?: string;
   /** Set when .quit / .exit was encountered; everything after is dropped. */
   quit?: true;
 }
 
+interface PreprocessCtx {
+  fs: CommandContext["fs"];
+  cwd: string;
+  /** Recursion depth tracker for .read. */
+  depth: number;
+}
+
 type Translation =
-  | { kind: "sql"; sql: string }
+  | { kind: "sql"; sql: string; quit?: boolean }
   | { kind: "drop" }
   | { kind: "passthrough" }
-  | { kind: "quit" };
+  | { kind: "quit" }
+  | { kind: "error"; message: string };
 
 /**
  * Tokenize a dot-command's argument tail into a list of strings. Single-
@@ -139,20 +189,70 @@ function globToSqlLike(pat: string): string {
   return pat.replace(/\*/g, "%").replace(/\?/g, "_");
 }
 
-function notSupportedSelect(
+function notImplementedSelect(
   cmd: string,
   hint: string,
 ): { kind: "sql"; sql: string } {
-  const msg = `sqlite3: ${cmd} is not supported in this sandbox - ${hint}`;
+  const msg = `Error: ${cmd} is not implemented in just-bash sqlite3 - ${hint}`;
   return { kind: "sql", sql: `SELECT ${sqlString(msg)} AS error;` };
 }
 
-function translateDotCommand(cmd: string, args: string[]): Translation {
+async function translateDotCommand(
+  cmd: string,
+  args: string[],
+  mutation: FormatterMutation,
+  ctx: PreprocessCtx,
+): Promise<Translation> {
   if (SILENT_DROP_COMMANDS.has(cmd)) {
     return { kind: "drop" };
   }
 
   switch (cmd) {
+    case ".headers":
+    case ".header": {
+      const v = args[0]?.toLowerCase();
+      if (v === "on" || v === "true" || v === "1") {
+        mutation.header = true;
+      } else if (v === "off" || v === "false" || v === "0") {
+        mutation.header = false;
+      } else {
+        return {
+          kind: "error",
+          message: `Error: unknown argument to ${cmd}: ${args[0] ?? ""}`,
+        };
+      }
+      return { kind: "drop" };
+    }
+    case ".mode": {
+      const m = args[0];
+      if (!m || !VALID_MODES.has(m)) {
+        return {
+          kind: "error",
+          message: `Error: unknown mode: ${m ?? ""}`,
+        };
+      }
+      mutation.mode = m as OutputMode;
+      // Don't touch mutation.separator — real sqlite3 keeps .separator
+      // independent of .mode (csv/tabs hardcode their separators in the
+      // formatter; list reads from options.separator). Mutating separator
+      // here would clobber an explicit .separator that ran earlier.
+      return { kind: "drop" };
+    }
+    case ".separator": {
+      if (args.length === 0) {
+        return {
+          kind: "error",
+          message: "Error: .separator requires an argument",
+        };
+      }
+      mutation.separator = args[0];
+      if (args.length > 1) mutation.newline = args[1];
+      return { kind: "drop" };
+    }
+    case ".nullvalue": {
+      mutation.nullValue = args[0] ?? "";
+      return { kind: "drop" };
+    }
     case ".tables": {
       const pat = args[0];
       const baseFilter =
@@ -189,86 +289,100 @@ function translateDotCommand(cmd: string, args: string[]): Translation {
         sql: `SELECT name FROM sqlite_master WHERE ${where} ORDER BY name;`,
       };
     }
-    case ".databases": {
+    case ".databases":
       return { kind: "sql", sql: "PRAGMA database_list;" };
-    }
-    case ".help": {
+    case ".help":
       return { kind: "sql", sql: `SELECT ${sqlString(HELP_TEXT)} AS help;` };
-    }
     case ".quit":
-    case ".exit": {
+    case ".exit":
       return { kind: "quit" };
-    }
     case ".read": {
-      const file = args[0] ?? "FILE";
-      return notSupportedSelect(cmd, `use: cat ${file} | sqlite3 DB`);
+      const file = args[0];
+      if (!file) {
+        return { kind: "error", message: "Error: usage: .read FILE" };
+      }
+      if (ctx.depth >= MAX_READ_DEPTH) {
+        return { kind: "error", message: "Error: .read depth limit exceeded" };
+      }
+      let contents: string;
+      try {
+        const path = ctx.fs.resolvePath(ctx.cwd, file);
+        contents = await ctx.fs.readFile(path);
+      } catch (e) {
+        return {
+          kind: "error",
+          message: `Error: cannot open "${file}": ${sanitizeErrorMessage((e as Error).message)}`,
+        };
+      }
+      const sub = await preprocessDotCommandsInternal(contents, mutation, {
+        fs: ctx.fs,
+        cwd: ctx.cwd,
+        depth: ctx.depth + 1,
+      });
+      if (sub.error) return { kind: "error", message: sub.error };
+      return { kind: "sql", sql: sub.sql, quit: sub.quit };
     }
     case ".dump":
-      return notSupportedSelect(
+      return notImplementedSelect(
         cmd,
         "query sqlite_master for schema, then emit per-table SELECTs",
       );
     case ".save":
     case ".backup":
-      return notSupportedSelect(
+      return notImplementedSelect(
         cmd,
         "emit a SELECT and redirect with shell instead",
       );
     case ".import":
-      return notSupportedSelect(
+      return notImplementedSelect(
         cmd,
         "read the source file with cat and run INSERTs from a SQL script",
       );
     case ".restore":
     case ".open":
-      return notSupportedSelect(cmd, "open the file directly: sqlite3 path.db");
+      return notImplementedSelect(
+        cmd,
+        "open the file directly: sqlite3 path.db",
+      );
     case ".clone":
-      return notSupportedSelect(
+      return notImplementedSelect(
         cmd,
         "use .schema then INSERT INTO ... SELECT to copy",
       );
     case ".output":
-      return notSupportedSelect(cmd, "redirect output with shell > or |");
+      return notImplementedSelect(cmd, "redirect output with shell > or |");
     case ".shell":
     case ".system":
-      return notSupportedSelect(cmd, "use bash for shell commands");
+      return notImplementedSelect(cmd, "use bash for shell commands");
     case ".cd":
-      return notSupportedSelect(
+      return notImplementedSelect(
         cmd,
         "use bash 'cd' for working-directory changes",
       );
     case ".load":
-      return notSupportedSelect(
+      return notImplementedSelect(
         cmd,
         "extension loading is disabled in this sandbox",
       );
     case ".iotrace":
     case ".log":
     case ".excel":
-      return notSupportedSelect(cmd, "not available in this sandbox");
+      return notImplementedSelect(cmd, "not available in this sandbox");
     default:
       // Unknown dot-command — leave it in place so sql.js produces its
-      // native "near \".\": syntax error" rather than us inventing a
-      // CLI-shaped error message.
+      // native "near \".\": syntax error".
       return { kind: "passthrough" };
   }
 }
 
-/**
- * Public entry point. Char-scans the SQL, replacing recognized dot-commands
- * with equivalent SQL (or dropping them), and returns the rewritten SQL.
- *
- * The `_ctx` argument is unused today; it stays in the signature so a
- * future `.read FILE` reintroduction can add file inlining without
- * breaking callers.
- */
-export async function preprocessDotCommands(
+async function preprocessDotCommandsInternal(
   sql: string,
-  _ctx: { fs: CommandContext["fs"]; cwd: string },
+  mutation: FormatterMutation,
+  ctx: PreprocessCtx,
 ): Promise<PreprocessResult> {
   // Fast path: no `.` at any potential boundary anywhere → nothing to do.
   if (!/(?:^|;|\n)\s*\./.test(sql)) {
-    return { sql };
+    return { sql, formatterMutation: mutation };
   }
 
   let out = "";
@@ -347,8 +461,8 @@ export async function preprocessDotCommands(
       continue;
     }
 
-    // Whitespace at boundary — buffer until we know whether this line is a
-    // dot-command (then drop the buffer) or SQL (then flush it through).
+    // Whitespace at boundary — buffer until we know whether this segment
+    // is a dot-command (then drop the buffer) or SQL (then flush it through).
     if (ch === " " || ch === "\t" || ch === "\r") {
       buffered += ch;
       i++;
@@ -362,14 +476,14 @@ export async function preprocessDotCommands(
       const cmdStart = j;
       while (j < len && /[a-zA-Z0-9_]/.test(sql[j] ?? "")) j++;
       const cmd = `.${sql.slice(cmdStart, j).toLowerCase()}`;
-      const tail = [];
+      const tail: string[] = [];
       while (j < len && sql[j] !== ";" && sql[j] !== "\n") {
         tail.push(sql[j]);
         j++;
       }
       const args = tokenizeArgs(tail.join(""));
 
-      const result = translateDotCommand(cmd, args);
+      const result = await translateDotCommand(cmd, args, mutation, ctx);
 
       if (result.kind === "drop") {
         // Discard the command and any whitespace that led up to it.
@@ -380,12 +494,21 @@ export async function preprocessDotCommands(
         buffered = "";
         out += sql.slice(i, j);
       } else if (result.kind === "quit") {
-        // Drop everything from here to end of input.
-        return { sql: out, quit: true };
+        return { sql: out, formatterMutation: mutation, quit: true };
+      } else if (result.kind === "error") {
+        return {
+          sql: out,
+          formatterMutation: mutation,
+          error: result.message,
+        };
       } else {
+        // kind === "sql"
         out += buffered;
         buffered = "";
         out += result.sql;
+        if (result.quit) {
+          return { sql: out, formatterMutation: mutation, quit: true };
+        }
       }
 
       i = j;
@@ -402,5 +525,23 @@ export async function preprocessDotCommands(
   }
 
   out += buffered;
-  return { sql: out };
+  return { sql: out, formatterMutation: mutation };
+}
+
+/**
+ * Public entry point. Char-scans the SQL, replacing recognized dot-commands
+ * with equivalent SQL (or applying formatter mutations / inlining .read'd
+ * files / dropping silent no-ops), and returns the rewritten SQL plus the
+ * accumulated formatter state.
+ */
+export async function preprocessDotCommands(
+  sql: string,
+  ctx: { fs: CommandContext["fs"]; cwd: string },
+): Promise<PreprocessResult> {
+  const mutation: FormatterMutation = Object.create(null);
+  return preprocessDotCommandsInternal(sql, mutation, {
+    fs: ctx.fs,
+    cwd: ctx.cwd,
+    depth: 0,
+  });
 }
