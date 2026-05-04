@@ -115,6 +115,10 @@ function parseArgs(args) {
             }
         }
         else {
+            // `-` is the conventional CPython sentinel for "read program from
+            // standard input" (see `man python3`). It must NOT be treated as a
+            // file path. Carry it through as a sentinel so execute() can route
+            // to the stdin branch while still preserving any trailing scriptArgs.
             result.scriptFile = arg;
             result.scriptArgs = args.slice(firstArgIndex + 1);
         }
@@ -414,6 +418,13 @@ export const python3Command = {
             }
             pythonCode = `import runpy; runpy.run_module('${parsed.module}', run_name='__main__')`;
             scriptPath = parsed.module;
+        }
+        else if (parsed.scriptFile === "-") {
+            // CPython's `python3 -` reads the program from standard input.
+            // Empty stdin runs an empty program (exit 0) — matching CPython's
+            // behavior in non-interactive contexts where no program is provided.
+            pythonCode = ctx.stdin;
+            scriptPath = "-";
         }
         else if (parsed.scriptFile !== null) {
             const filePath = ctx.fs.resolvePath(ctx.cwd, parsed.scriptFile);

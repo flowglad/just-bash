@@ -78,8 +78,11 @@ const VALUE_OPTS = [
         validate: validateFilesize,
     },
     { long: "context-separator", target: "contextSeparator" },
-    // Thread count (no-op in single-threaded environment, but accept the option)
-    { short: "j", long: "threads", target: "maxDepth", parse: () => Infinity }, // Use maxDepth as dummy target (value ignored)
+    // Thread count (no-op in single-threaded environment). Must NOT be
+    // wired to a real RgOptions field — earlier versions used
+    // `target: "maxDepth"` as a dummy and silently overrode the user's
+    // max-depth setting to Infinity, disabling the safe default of 256.
+    { short: "j", long: "threads", ignored: true },
     // Custom ignore file
     { long: "ignore-file", target: "ignoreFiles", multi: true },
     // Preprocessing
@@ -517,6 +520,10 @@ function applyValueOpt(options, def, value) {
         const error = def.validate(value);
         if (error)
             return error;
+    }
+    // Compatibility-only flags consume their value but don't store it.
+    if (def.ignored || !def.target) {
+        return undefined;
     }
     const parsed = def.parse ? def.parse(value) : value;
     if (def.multi) {
