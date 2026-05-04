@@ -27,8 +27,19 @@
  */
 export interface PinnedAddress {
     hostname: string;
-    address: string;
-    family: 4 | 6;
+    /**
+     * All public addresses validated at preflight. The patched `dns.lookup`
+     * filters this list by the requested family at connect time, so callers
+     * that explicitly ask for IPv4 or IPv6 (undici under `globalThis.fetch`
+     * with `verbatim: true` will do this when one family is unreachable on
+     * the host) get a matching address as long as the preflight returned
+     * one. Multiple addresses of the same family are preserved verbatim;
+     * any one of them is safe to pin to since each was validated as public.
+     */
+    addresses: {
+        address: string;
+        family: 4 | 6;
+    }[];
 }
 /**
  * Run `fn` with `dns.lookup` for `pinned.hostname` resolving to

@@ -89,11 +89,16 @@ function installDnsHook() {
             return originalLookup.apply(this, args);
         }
         const cb = callback;
-        if (options.family !== undefined &&
-            options.family !== 0 &&
-            options.family !== pinned.family) {
-            // Family mismatch — emulate ENOTFOUND so the connection fails closed
-            // rather than silently returning a wrong-family address.
+        // Filter the pinned set by the requested family. `family: 0` (or
+        // undefined) means "any" — undici's default with `verbatim: true`.
+        const requestedFamily = options.family === 4 || options.family === 6 ? options.family : 0;
+        const matching = requestedFamily === 0
+            ? pinned.addresses
+            : pinned.addresses.filter((a) => a.family === requestedFamily);
+        if (matching.length === 0) {
+            // No pinned address satisfies the requested family — emulate
+            // ENOTFOUND so the connection fails closed rather than silently
+            // returning a wrong-family address.
             const err = new Error(`ENOTFOUND ${hostname}`);
             err.code = "ENOTFOUND";
             err.errno = -3008;
@@ -104,10 +109,10 @@ function installDnsHook() {
         }
         process.nextTick(() => {
             if (options.all) {
-                cb(null, [{ address: pinned.address, family: pinned.family }]);
+                cb(null, matching.map((a) => ({ address: a.address, family: a.family })));
             }
             else {
-                cb(null, pinned.address, pinned.family);
+                cb(null, matching[0].address, matching[0].family);
             }
         });
     }
