@@ -592,41 +592,24 @@ export const sqlite3Command: Command = {
       };
     }
 
-    // Preprocess dot-commands (.tables, .schema, .mode, .read, ...)
-    let dotError: string | undefined;
+    // Preprocess dot-commands (.tables, .schema, .help, ...). The
+    // preprocessor either translates each dot-command to equivalent SQL
+    // (which then runs through the worker like any other SELECT), drops
+    // it as a no-op (.headers / .mode / etc. — use CLI flags instead),
+    // signals quit (.quit / .exit), or leaves an unknown dot-command in
+    // place so sql.js produces its native syntax error. No out-of-band
+    // errors are emitted from preprocessing.
     {
       const pre = await preprocessDotCommands(sql, {
         fs: ctx.fs,
         cwd: ctx.cwd,
       });
       sql = pre.sql.trim();
-      if (pre.formatterMutation.mode !== undefined)
-        options.mode = pre.formatterMutation.mode;
-      if (pre.formatterMutation.header !== undefined)
-        options.header = pre.formatterMutation.header;
-      if (pre.formatterMutation.separator !== undefined)
-        options.separator = pre.formatterMutation.separator;
-      if (pre.formatterMutation.newline !== undefined)
-        options.newline = pre.formatterMutation.newline;
-      if (pre.formatterMutation.nullValue !== undefined)
-        options.nullValue = pre.formatterMutation.nullValue;
-      dotError = pre.error;
-      if (dotError && options.bail) {
-        return { stdout: "", stderr: `${dotError}\n`, exitCode: 1 };
-      }
-      // Pure formatter mutations / dot-commands with no SQL: short-circuit
-      // instead of sending whitespace to the worker. Real sqlite3 emits
-      // nothing in this case. Without -bail, dot-command errors are routed
-      // to stdout to match the in-band reporting used for SQL errors below
-      // (so callers reading a single channel see results and errors in
-      // script order).
+      // Empty SQL after preprocessing — e.g., `sqlite3 :memory: ".headers on"`
+      // (a single dropped command) or `sqlite3 :memory: ".quit"`. Real sqlite3
+      // emits nothing in this case.
       if (!sql) {
-        const stdout = dotError ? `${dotError}\n` : "";
-        return {
-          stdout,
-          stderr: "",
-          exitCode: dotError !== undefined ? 1 : 0,
-        };
+        return { stdout: "", stderr: "", exitCode: 0 };
       }
     }
 
@@ -749,18 +732,10 @@ export const sqlite3Command: Command = {
       }
     }
 
-    // Without -bail, dot-command errors are emitted in stdout alongside SQL
-    // results (matches inline SQL error routing — preprocessing stops at the
-    // first bad dot-command, so SQL accumulated up to that point precedes
-    // the error in script order).
-    if (dotError) {
-      stdout += `${dotError}\n`;
-    }
-    // dotError always causes exit 1 (matches real sqlite3).
-    // hadError without -bail doesn't (pre-existing behaviour preserved);
-    // hadError with -bail already returned early in the loop above.
-    const exitCode = dotError !== undefined ? 1 : 0;
-    return { stdout, stderr: "", exitCode };
+    // hadError without -bail doesn't fail the invocation (pre-existing
+    // behaviour preserved — error rows are appended to stdout above);
+    // hadError with -bail already returned early in the loop.
+    return { stdout, stderr: "", exitCode: 0 };
   },
 };
 
