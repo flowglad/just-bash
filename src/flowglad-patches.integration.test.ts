@@ -38,7 +38,8 @@ describe("Flowglad carried patches", () => {
       );
 
       expect(result.stderr).toBe("");
-      expect(result.stdout).toBe("CREATE TABLE alpha(x INTEGER)\n");
+      // .schema appends `;` to each CREATE statement to match real sqlite3.
+      expect(result.stdout).toBe("CREATE TABLE alpha(x INTEGER);\n");
       expect(result.exitCode).toBe(0);
     });
   });
