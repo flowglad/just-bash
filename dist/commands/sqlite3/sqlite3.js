@@ -491,7 +491,12 @@ export const sqlite3Command = {
                 exitCode: 1,
             };
         }
-        // Preprocess dot-commands (.tables, .schema, .mode, .read, ...)
+        // Preprocess dot-commands (.tables, .schema, .mode, .read, ...). Each
+        // dot-command resolves to one of: SQL replacement, formatter mutation,
+        // silent drop, .read file inlining, .quit/.exit termination, an
+        // in-band "not implemented" SELECT, or a dotError surfaced to the
+        // caller. Unknown dot-commands fall through to sql.js for a native
+        // syntax error.
         let dotError;
         {
             const pre = await preprocessDotCommands(sql, {

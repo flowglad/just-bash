@@ -4,29 +4,61 @@
  * Real sqlite3's CLI accepts dot-commands (`.tables`, `.schema`, `.mode csv`,
  * `.read script.sql`, etc.) interleaved with SQL. The sql.js engine doesn't
  * implement these — they're a feature of the CLI, not the library — so we
- * translate them to equivalent SQL or to formatter mutations before handing
- * the script to the worker.
+ * translate them to equivalent SQL, mutate formatter state, recursively
+ * inline `.read`'d files, or surface errors before handing the script to
+ * the worker.
  *
- * Supported:
- *   .tables [pattern]           -> SELECT name FROM sqlite_master ...
- *   .schema [pattern]           -> SELECT sql FROM sqlite_master ...
- *   .indexes [pattern]          -> SELECT name FROM sqlite_master WHERE type='index' ...
- *   .databases                  -> emits a synthetic "main" row (sql.js has no ATTACH-to-file)
- *   .headers on|off             -> formatter mutation
- *   .header  on|off             -> alias of .headers
- *   .mode <mode>                -> formatter mutation (list|csv|json|line|column|table|markdown|tabs|box|quote|html|ascii)
- *   .separator <col> [<row>]    -> formatter mutation
- *   .nullvalue <text>           -> formatter mutation
- *   .read <file>                -> inline file contents (recursive, max depth 8)
- *   .quit / .exit               -> stop processing further input (best-effort)
+ * Scanner: char-level, with state for SQL string literals (`'…'`, `"…"`
+ * including the SQL doubled-quote escape `''` / `""`), line comments
+ * (`-- …\n`), and block comments (`/* … *​/`). A dot-command is
+ * recognized only at a "boundary" — start of input, just after a `;`,
+ * or just after a `\n` — and only when not inside a string or comment.
+ * This is what lets `'a\n.tables'` round-trip intact and what lets
+ * `.headers on; .mode csv; CREATE TABLE…;` be three separate tokens
+ * on a single line.
  *
- * Not supported (returns an error so an agent sees a clear signal):
- *   .import .dump .clone .save .restore .backup .open .shell .system .iotrace
+ * Each recognized dot-command resolves to one of these outcomes:
  *
- * Limitation: formatter mutations are global within a single sqlite3
- * invocation. The LAST seen `.mode` / `.headers` / `.separator` wins.
- * Real sqlite3 applies them incrementally; we approximate. This matches
- * the most common agent use case (`.mode csv` followed by SELECTs).
+ *   1. SQL replacement — emit equivalent SQL in the dot-command's place.
+ *      Used for: .tables, .schema, .indexes/.indices, .databases (sqlite_master
+ *      queries / PRAGMA) and .help (a SELECT of the help text). Also used
+ *      for the recursively-inlined contents of a successful `.read FILE`.
+ *
+ *   2. Formatter mutation — adjust output state for downstream SQL.
+ *      Used for: .headers/.header (on/off), .mode <mode>, .separator <s>
+ *      [<row>], .nullvalue <text>. Bad arguments surface a preprocessor
+ *      error matching real sqlite3's wording (e.g. "Error: unknown mode:
+ *      parquet"). Last write wins within a single invocation.
+ *
+ *   3. Silent drop — recognize and discard, surrounding SQL still runs.
+ *      Used for the no-op metacommands the sandbox doesn't implement
+ *      (.echo, .timer, .changes, .bail, .show, .eqp, .width, .prompt,
+ *      .print, .explain).
+ *
+ *   4. .read FILE — open the file, recursively run the same scanner on
+ *      its contents (sharing the formatter mutation and bumping depth),
+ *      and splice the result into the output stream. Missing files,
+ *      missing arguments, or exceeding MAX_READ_DEPTH surface a
+ *      preprocessor error.
+ *
+ *   5. .quit / .exit — terminate preprocessing; anything after them is
+ *      dropped (including in a parent scanner that called us through
+ *      `.read`).
+ *
+ *   6. Not-implemented family — .dump, .save, .backup, .import, .clone,
+ *      .restore, .open, .output, .shell, .system, .cd, .load, .iotrace,
+ *      .log, .excel translate to a `SELECT 'Error: …' AS error;` so the
+ *      message rides in stdout in script-order without aborting the
+ *      surrounding SQL. We don't implement these, but agents reach for
+ *      them and an actionable hint is friendlier than a syntax error.
+ *
+ *   7. Passthrough — unknown dot-commands are left in place verbatim,
+ *      so sql.js produces its native "near \".\": syntax error" rather
+ *      than us inventing a CLI-shaped error message.
+ *
+ * Pattern handling: `.tables PAT`, `.schema PAT`, `.indexes PAT` convert
+ * shell-glob `*`/`?` to SQL `%`/`_` so `.tables user*` matches the way
+ * agents expect.
  */
 import { sanitizeErrorMessage } from "../../fs/sanitize-error.js";
 const VALID_MODES = new Set([
@@ -43,122 +75,90 @@ const VALID_MODES = new Set([
     "html",
     "ascii",
 ]);
-const UNSUPPORTED_DOT_COMMANDS = new Set([
-    ".import",
-    ".dump",
-    ".clone",
-    ".save",
-    ".restore",
-    ".backup",
-    ".open",
-    ".shell",
-    ".system",
-    ".iotrace",
-    ".log",
-    ".cd",
-    ".load",
-    ".excel",
+const SILENT_DROP_COMMANDS = new Set([
+    ".echo",
+    ".timer",
+    ".changes",
+    ".bail",
+    ".show",
+    ".eqp",
+    ".width",
+    ".prompt",
+    ".print",
+    ".explain",
 ]);
 const MAX_READ_DEPTH = 8;
+const HELP_TEXT = "Supported dot commands: .tables [PAT], .schema [PAT], .indexes [TBL] (alias .indices), .databases, .help. " +
+    "Formatter state: .headers/.header on|off, .mode <list|csv|json|line|column|table|markdown|tabs|box|quote|html|ascii>, .separator <SEP> [<ROW>], .nullvalue <TEXT>. " +
+    "File inlining: .read FILE (recursive). " +
+    "Stops processing: .quit / .exit. " +
+    "Silent no-ops: .echo / .timer / .changes / .bail / .show / .eqp / .width / .prompt / .print / .explain. " +
+    "Not implemented: .dump / .save / .backup / .import / .clone / .restore / .open / .output / .shell / .system / .cd / .load / .iotrace / .log / .excel (each emits an actionable error). " +
+    "Unknown commands fall through to sql.js for a native syntax error.";
 /**
- * Tokenize a dot-command line into [name, ...args]. Single- and double-quoted
- * args are honored; everything else is whitespace-separated. Backslash escapes
- * are not honored — bash already processed them by the time we see this.
+ * Tokenize a dot-command's argument tail into a list of strings. Single-
+ * and double-quoted segments are honored and their quotes stripped so a
+ * caller's `'order%'` becomes the bare argument `order%`. Anything else
+ * splits on whitespace.
  */
-function tokenizeDotCommand(line) {
+function tokenizeArgs(tail) {
     const tokens = [];
     let current = "";
     let inQuote = null;
-    for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
+    let hasContent = false;
+    for (let i = 0; i < tail.length; i++) {
+        const ch = tail[i];
         if (inQuote) {
             if (ch === inQuote) {
                 inQuote = null;
             }
             else {
                 current += ch;
+                hasContent = true;
             }
         }
         else if (ch === '"' || ch === "'") {
             inQuote = ch;
+            hasContent = true;
         }
-        else if (ch === " " || ch === "\t") {
-            if (current.length > 0) {
+        else if (ch === " " || ch === "\t" || ch === "\r") {
+            if (hasContent) {
                 tokens.push(current);
                 current = "";
+                hasContent = false;
             }
         }
         else {
             current += ch;
+            hasContent = true;
         }
     }
-    if (current.length > 0)
+    if (hasContent)
         tokens.push(current);
     return tokens;
 }
 function escapeSqlLiteral(s) {
     return s.replace(/'/g, "''");
 }
-/**
- * Translate a single dot-command to SQL or a formatter mutation.
- * Returns the SQL replacement (may be empty string for pure mutations),
- * a quit signal (.quit/.exit, possibly with trailing SQL from .read),
- * or an error.
- */
-async function translateDotCommand(tokens, mutation, ctx) {
-    const [head, ...rest] = tokens;
-    // The caller's guard (`/^\.[a-zA-Z]/`) ensures non-empty tokens in
-    // practice, but make the assumption explicit so a future caller change
-    // can't produce confusing "unknown command: undefined" errors.
-    if (!head) {
-        return { error: "Error: empty dot-command" };
+function sqlString(s) {
+    return `'${escapeSqlLiteral(s)}'`;
+}
+/** Convert shell-style glob (`*`, `?`) to SQL LIKE wildcards (`%`, `_`). */
+function globToSqlLike(pat) {
+    return pat.replace(/\*/g, "%").replace(/\?/g, "_");
+}
+function notImplementedSelect(cmd, hint) {
+    const msg = `Error: ${cmd} is not implemented in just-bash sqlite3 - ${hint}`;
+    return { kind: "sql", sql: `SELECT ${sqlString(msg)} AS error;` };
+}
+async function translateDotCommand(cmd, args, mutation, ctx) {
+    if (SILENT_DROP_COMMANDS.has(cmd)) {
+        return { kind: "drop" };
     }
-    if (UNSUPPORTED_DOT_COMMANDS.has(head)) {
-        return {
-            error: `Error: ${head} is not supported by just-bash sqlite3`,
-        };
-    }
-    switch (head) {
-        case ".tables": {
-            const pat = rest[0];
-            // Use '~' as ESCAPE char to avoid the JS-template-literal -> SQL
-            // double-escape ambiguity that '\\' creates.
-            const where = pat
-                ? `type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~' AND name LIKE '${escapeSqlLiteral(pat)}'`
-                : `type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~'`;
-            return {
-                sql: `SELECT name FROM sqlite_master WHERE ${where} ORDER BY name`,
-            };
-        }
-        case ".indexes":
-        case ".indices": {
-            const pat = rest[0];
-            const where = pat
-                ? `type='index' AND tbl_name LIKE '${escapeSqlLiteral(pat)}'`
-                : `type='index'`;
-            return {
-                sql: `SELECT name FROM sqlite_master WHERE ${where} ORDER BY name`,
-            };
-        }
-        case ".schema": {
-            const pat = rest[0];
-            const where = pat
-                ? `type IN ('table','index','view','trigger') AND sql IS NOT NULL AND name LIKE '${escapeSqlLiteral(pat)}'`
-                : `type IN ('table','index','view','trigger') AND sql IS NOT NULL`;
-            // Append ';' so output mirrors real sqlite3 .schema (each CREATE ends with ;)
-            return {
-                sql: `SELECT sql || ';' FROM sqlite_master WHERE ${where} ORDER BY name`,
-            };
-        }
-        case ".databases": {
-            // sql.js sandbox: only "main" is meaningful. Emit a synthetic single row.
-            return {
-                sql: `SELECT 'main' AS name, '' AS file`,
-            };
-        }
+    switch (cmd) {
         case ".headers":
         case ".header": {
-            const v = rest[0]?.toLowerCase();
+            const v = args[0]?.toLowerCase();
             if (v === "on" || v === "true" || v === "1") {
                 mutation.header = true;
             }
@@ -167,42 +167,91 @@ async function translateDotCommand(tokens, mutation, ctx) {
             }
             else {
                 return {
-                    error: `Error: unknown argument to ${head}: ${rest[0] ?? ""}`,
+                    kind: "error",
+                    message: `Error: unknown argument to ${cmd}: ${args[0] ?? ""}`,
                 };
             }
-            return { sql: "" };
+            return { kind: "drop" };
         }
         case ".mode": {
-            const m = rest[0];
+            const m = args[0];
             if (!m || !VALID_MODES.has(m)) {
-                return { error: `Error: unknown mode: ${m ?? ""}` };
+                return {
+                    kind: "error",
+                    message: `Error: unknown mode: ${m ?? ""}`,
+                };
             }
             mutation.mode = m;
-            // Do NOT touch mutation.separator here — real sqlite3 keeps .separator
+            // Don't touch mutation.separator — real sqlite3 keeps .separator
             // independent of .mode (csv/tabs hardcode their separators in the
             // formatter; list reads from options.separator). Mutating separator
             // here would clobber an explicit .separator that ran earlier.
-            return { sql: "" };
+            return { kind: "drop" };
         }
         case ".separator": {
-            if (rest.length === 0) {
-                return { error: "Error: .separator requires an argument" };
+            if (args.length === 0) {
+                return {
+                    kind: "error",
+                    message: "Error: .separator requires an argument",
+                };
             }
-            mutation.separator = rest[0];
-            if (rest.length > 1)
-                mutation.newline = rest[1];
-            return { sql: "" };
+            mutation.separator = args[0];
+            if (args.length > 1)
+                mutation.newline = args[1];
+            return { kind: "drop" };
         }
         case ".nullvalue": {
-            mutation.nullValue = rest[0] ?? "";
-            return { sql: "" };
+            mutation.nullValue = args[0] ?? "";
+            return { kind: "drop" };
         }
+        case ".tables": {
+            const pat = args[0];
+            const baseFilter = "type='table' AND name NOT LIKE 'sqlite~_%' ESCAPE '~'";
+            const where = pat
+                ? `${baseFilter} AND name LIKE ${sqlString(globToSqlLike(pat))}`
+                : baseFilter;
+            return {
+                kind: "sql",
+                sql: `SELECT name FROM sqlite_master WHERE ${where} ORDER BY name;`,
+            };
+        }
+        case ".schema": {
+            const pat = args[0];
+            const baseFilter = "type IN ('table','index','view','trigger') AND sql IS NOT NULL";
+            const where = pat
+                ? `${baseFilter} AND name LIKE ${sqlString(globToSqlLike(pat))}`
+                : baseFilter;
+            // Append ';' so output mirrors real sqlite3 .schema (each CREATE ends with ;).
+            return {
+                kind: "sql",
+                sql: `SELECT sql || ';' FROM sqlite_master WHERE ${where} ORDER BY name;`,
+            };
+        }
+        case ".indexes":
+        case ".indices": {
+            const pat = args[0];
+            const where = pat
+                ? `type='index' AND tbl_name LIKE ${sqlString(globToSqlLike(pat))}`
+                : "type='index'";
+            return {
+                kind: "sql",
+                sql: `SELECT name FROM sqlite_master WHERE ${where} ORDER BY name;`,
+            };
+        }
+        case ".databases":
+            return { kind: "sql", sql: "PRAGMA database_list;" };
+        case ".help":
+            return { kind: "sql", sql: `SELECT ${sqlString(HELP_TEXT)} AS help;` };
+        case ".quit":
+        case ".exit":
+            return { kind: "quit" };
         case ".read": {
-            const file = rest[0];
-            if (!file)
-                return { error: "Error: .read requires a filename" };
+            const file = args[0];
+            if (!file) {
+                return { kind: "error", message: "Error: usage: .read FILE" };
+            }
             if (ctx.depth >= MAX_READ_DEPTH) {
-                return { error: "Error: .read depth limit exceeded" };
+                return { kind: "error", message: "Error: .read depth limit exceeded" };
             }
             let contents;
             try {
@@ -211,96 +260,194 @@ async function translateDotCommand(tokens, mutation, ctx) {
             }
             catch (e) {
                 return {
-                    error: `Error: cannot open ${file}: ${sanitizeErrorMessage(e.message)}`,
+                    kind: "error",
+                    message: `Error: cannot open "${file}": ${sanitizeErrorMessage(e.message)}`,
                 };
             }
-            // Recurse so .read inside the file is also expanded
             const sub = await preprocessDotCommandsInternal(contents, mutation, {
                 fs: ctx.fs,
                 cwd: ctx.cwd,
                 depth: ctx.depth + 1,
             });
             if (sub.error)
-                return { error: sub.error };
-            // Propagate the quit signal: a .quit inside the read'd file should
-            // stop the parent from processing anything that came after .read.
-            return sub.quit ? { sql: sub.sql, quit: true } : { sql: sub.sql };
+                return { kind: "error", message: sub.error };
+            return { kind: "sql", sql: sub.sql, quit: sub.quit };
         }
-        case ".quit":
-        case ".exit": {
-            // Stop processing further input. Real sqlite3 exits immediately on
-            // .quit; we approximate by dropping everything that follows from
-            // the SQL we emit to the worker.
-            return { sql: "", quit: true };
-        }
-        case ".help":
-        case ".show":
-        case ".timer":
-        case ".changes":
-        case ".bail":
-        case ".echo":
-        case ".eqp":
-        case ".width":
-        case ".prompt":
-        case ".print":
-        case ".explain":
-            // Accept silently; not implemented but harmless to ignore for agent use.
-            return { sql: "" };
+        case ".dump":
+            return notImplementedSelect(cmd, "query sqlite_master for schema, then emit per-table SELECTs");
+        case ".save":
+        case ".backup":
+            return notImplementedSelect(cmd, "emit a SELECT and redirect with shell instead");
+        case ".import":
+            return notImplementedSelect(cmd, "read the source file with cat and run INSERTs from a SQL script");
+        case ".restore":
+        case ".open":
+            return notImplementedSelect(cmd, "open the file directly: sqlite3 path.db");
+        case ".clone":
+            return notImplementedSelect(cmd, "use .schema then INSERT INTO ... SELECT to copy");
+        case ".output":
+            return notImplementedSelect(cmd, "redirect output with shell > or |");
+        case ".shell":
+        case ".system":
+            return notImplementedSelect(cmd, "use bash for shell commands");
+        case ".cd":
+            return notImplementedSelect(cmd, "use bash 'cd' for working-directory changes");
+        case ".load":
+            return notImplementedSelect(cmd, "extension loading is disabled in this sandbox");
+        case ".iotrace":
+        case ".log":
+        case ".excel":
+            return notImplementedSelect(cmd, "not available in this sandbox");
         default:
-            return {
-                error: `Error: unknown command or invalid arguments: "${head.replace(/^\./, "")}". Enter ".help" for help`,
-            };
+            // Unknown dot-command — leave it in place so sql.js produces its
+            // native "near \".\": syntax error".
+            return { kind: "passthrough" };
     }
 }
-async function preprocessDotCommandsInternal(input, mutation, ctx) {
-    const lines = input.split("\n");
-    const outLines = [];
-    for (const rawLine of lines) {
-        const trimmed = rawLine.trim();
-        // Only treat lines starting with `.` followed by a letter as
-        // dot-commands. SQL line comments (`-- ...`) and SQL fragments that
-        // happen to start with `.` followed by a digit (e.g. a numeric
-        // continuation `.5`) are passed through unchanged.
-        if (trimmed.startsWith("--") ||
-            !trimmed.startsWith(".") ||
-            !/^\.[a-zA-Z]/.test(trimmed)) {
-            outLines.push(rawLine);
+async function preprocessDotCommandsInternal(sql, mutation, ctx) {
+    // Fast path: no `.` at any potential boundary anywhere → nothing to do.
+    if (!/(?:^|;|\n)\s*\./.test(sql)) {
+        return { sql, formatterMutation: mutation };
+    }
+    let out = "";
+    let i = 0;
+    let atBoundary = true;
+    let buffered = "";
+    const len = sql.length;
+    while (i < len) {
+        const ch = sql[i];
+        const next = sql[i + 1];
+        // SQL string literal: track but do not translate inside.
+        if (ch === "'" || ch === '"') {
+            out += buffered;
+            buffered = "";
+            const quote = ch;
+            out += ch;
+            i++;
+            while (i < len) {
+                const c = sql[i];
+                out += c;
+                i++;
+                if (c === quote) {
+                    if (sql[i] === quote) {
+                        // Doubled-quote escape — consume the second quote and keep going.
+                        out += sql[i];
+                        i++;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            atBoundary = false;
             continue;
         }
-        const tokens = tokenizeDotCommand(trimmed);
-        const result = await translateDotCommand(tokens, mutation, ctx);
-        if ("error" in result) {
-            return {
-                sql: outLines.join("\n"),
-                formatterMutation: mutation,
-                error: result.error,
-            };
-        }
-        if (result.sql.length > 0) {
-            // Ensure dot-translated SQL is its own statement. .read produces
-            // multi-line output; split so each line becomes its own outLines
-            // entry rather than a single multi-line element (keeps the
-            // outLines.join("\n") at the end behaving uniformly).
-            const stmt = result.sql.trim();
-            const withSemi = stmt.endsWith(";") ? stmt : `${stmt};`;
-            for (const line of withSemi.split("\n")) {
-                outLines.push(line);
+        // SQL line comment: `-- ...` to end of line. Don't consume the newline;
+        // the main loop handles it as a boundary on the next iteration.
+        if (ch === "-" && next === "-") {
+            out += buffered;
+            buffered = "";
+            while (i < len && sql[i] !== "\n") {
+                out += sql[i];
+                i++;
             }
+            continue;
         }
-        if (result.quit) {
-            return {
-                sql: outLines.join("\n"),
-                formatterMutation: mutation,
-                quit: true,
-            };
+        // SQL block comment: `/* ... */`. Not nested in SQLite.
+        if (ch === "/" && next === "*") {
+            out += buffered;
+            buffered = "";
+            out += "/*";
+            i += 2;
+            while (i < len) {
+                if (sql[i] === "*" && sql[i + 1] === "/") {
+                    out += "*/";
+                    i += 2;
+                    break;
+                }
+                out += sql[i];
+                i++;
+            }
+            continue;
         }
+        // Statement boundary.
+        if (ch === ";" || ch === "\n") {
+            out += buffered;
+            buffered = "";
+            out += ch;
+            atBoundary = true;
+            i++;
+            continue;
+        }
+        // Whitespace at boundary — buffer until we know whether this segment
+        // is a dot-command (then drop the buffer) or SQL (then flush it through).
+        if (ch === " " || ch === "\t" || ch === "\r") {
+            buffered += ch;
+            i++;
+            continue;
+        }
+        // Possible dot-command at boundary. The `[a-zA-Z]` guard rejects SQL
+        // numeric continuations like `.5` and other non-command dots.
+        if (atBoundary && ch === "." && next && /[a-zA-Z]/.test(next)) {
+            let j = i + 1;
+            const cmdStart = j;
+            while (j < len && /[a-zA-Z0-9_]/.test(sql[j] ?? ""))
+                j++;
+            const cmd = `.${sql.slice(cmdStart, j).toLowerCase()}`;
+            const tail = [];
+            while (j < len && sql[j] !== ";" && sql[j] !== "\n") {
+                tail.push(sql[j]);
+                j++;
+            }
+            const args = tokenizeArgs(tail.join(""));
+            const result = await translateDotCommand(cmd, args, mutation, ctx);
+            if (result.kind === "drop") {
+                // Discard the command and any whitespace that led up to it.
+                buffered = "";
+            }
+            else if (result.kind === "passthrough") {
+                // Leave the dot-command in place verbatim (sql.js will syntax-error).
+                out += buffered;
+                buffered = "";
+                out += sql.slice(i, j);
+            }
+            else if (result.kind === "quit") {
+                return { sql: out, formatterMutation: mutation, quit: true };
+            }
+            else if (result.kind === "error") {
+                return {
+                    sql: out,
+                    formatterMutation: mutation,
+                    error: result.message,
+                };
+            }
+            else {
+                // kind === "sql"
+                out += buffered;
+                buffered = "";
+                out += result.sql;
+                if (result.quit) {
+                    return { sql: out, formatterMutation: mutation, quit: true };
+                }
+            }
+            i = j;
+            atBoundary = false;
+            continue;
+        }
+        // Regular character — flush buffer, emit, leave boundary.
+        out += buffered;
+        buffered = "";
+        out += ch;
+        atBoundary = false;
+        i++;
     }
-    return { sql: outLines.join("\n"), formatterMutation: mutation };
+    out += buffered;
+    return { sql: out, formatterMutation: mutation };
 }
 /**
- * Public entry point. Walks the SQL line by line, replacing dot-commands
- * with equivalent SQL or formatter mutations. Returns the rewritten SQL
- * plus the accumulated mutation to apply to FormatOptions.
+ * Public entry point. Char-scans the SQL, replacing recognized dot-commands
+ * with equivalent SQL (or applying formatter mutations / inlining .read'd
+ * files / dropping silent no-ops), and returns the rewritten SQL plus the
+ * accumulated formatter state.
  */
 export async function preprocessDotCommands(sql, ctx) {
     const mutation = Object.create(null);
