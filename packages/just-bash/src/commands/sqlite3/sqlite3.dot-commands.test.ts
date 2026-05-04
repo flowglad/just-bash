@@ -459,7 +459,68 @@ EOF`,
     });
   });
 
-  describe("D15: interleaved .mode + query (last write wins)", () => {
+  describe("D15: scanner edge cases (review-pinned regressions)", () => {
+    it("a `;`-terminated drop does not leak an empty statement into the output", async () => {
+      // The scanner consumes the trailing `;` after a dropped command
+      // (`.headers on;` etc.) so `-echo` doesn't show a leading orphan
+      // `;` and downstream consumers of the emitted SQL don't see an
+      // empty statement.
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 -echo :memory: ".headers on; SELECT 1"',
+      );
+      // -echo prints the SQL exactly as sent to the worker. We want no
+      // leading `;` (empty statement) and no leading whitespace either.
+      expect(result.stdout.startsWith(";")).toBe(false);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a chained drop after a consumed `;` re-recognizes the next dot-command", async () => {
+      // After `.headers on;`'s trailing `;` is consumed, the scanner
+      // must treat the next char as if at a fresh boundary so `.mode csv`
+      // is also recognized. Pinned via the formatter mutation it should
+      // produce.
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 :memory: ".headers on; .mode csv; CREATE TABLE t(x); INSERT INTO t VALUES (42); SELECT * FROM t;"',
+      );
+      // Both .headers on and .mode csv applied → CSV with header row.
+      expect(result.stdout).toBe("x\n42\n");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a block comment does not leave the scanner at a boundary", async () => {
+      // `;` then `/* … */` then `.tables` (no intervening newline) used
+      // to fire the dot-command branch because the block-comment handler
+      // didn't reset atBoundary. `.tables` here must NOT be rewritten —
+      // sql.js will syntax-error on it instead.
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 :memory: "SELECT 1;/* note */.tables"',
+      );
+      // `.tables` falls through verbatim → sql.js syntax error in stdout.
+      expect(result.stdout).toContain("1");
+      expect(result.stdout).toContain("syntax error");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a block comment on its own line followed by a newline still allows .tables on the next line", async () => {
+      // Sanity: with a `\n` between `*/` and the next line, the boundary
+      // detection on `\n` re-arms atBoundary, so `.tables` on the next
+      // line IS recognized. The block-comment-doesn't-reset-atBoundary
+      // fix targets the same-line case only.
+      const env = new Bash();
+      await env.exec(
+        "sqlite3 /db.sqlite 'CREATE TABLE alpha(x INT)'",
+      );
+      const script = `/* preamble */\n.tables`;
+      const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
+      expect(result.stdout.trim()).toBe("alpha");
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("D16: interleaved .mode + query (last write wins)", () => {
     it("`.mode csv` followed by SELECT then `.mode list` — last mode wins (documented limitation)", async () => {
       const env = new Bash();
       await env.exec(

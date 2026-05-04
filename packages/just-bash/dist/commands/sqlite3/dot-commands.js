@@ -143,7 +143,11 @@ function escapeSqlLiteral(s) {
 function sqlString(s) {
     return `'${escapeSqlLiteral(s)}'`;
 }
-/** Convert shell-style glob (`*`, `?`) to SQL LIKE wildcards (`%`, `_`). */
+/**
+ * Convert shell-style glob (`*`, `?`) to SQL LIKE wildcards (`%`, `_`).
+ * Pre-existing `_` and `%` in the pattern pass through as SQL wildcards
+ * (intentional — matches real sqlite3's dot-command pattern handling).
+ */
 function globToSqlLike(pat) {
     return pat.replace(/\*/g, "%").replace(/\?/g, "_");
 }
@@ -352,7 +356,11 @@ async function preprocessDotCommandsInternal(sql, mutation, ctx) {
             }
             continue;
         }
-        // SQL block comment: `/* ... */`. Not nested in SQLite.
+        // SQL block comment: `/* ... */`. Not nested in SQLite. A block
+        // comment is content, so we leave boundary state — a dot-command
+        // immediately after `*/` (with no intervening `\n`) is therefore
+        // not recognized, matching real sqlite3's "dot-command must start
+        // a line" rule.
         if (ch === "/" && next === "*") {
             out += buffered;
             buffered = "";
@@ -367,6 +375,7 @@ async function preprocessDotCommandsInternal(sql, mutation, ctx) {
                 out += sql[i];
                 i++;
             }
+            atBoundary = false;
             continue;
         }
         // Statement boundary.
@@ -400,9 +409,26 @@ async function preprocessDotCommandsInternal(sql, mutation, ctx) {
             }
             const args = tokenizeArgs(tail.join(""));
             const result = await translateDotCommand(cmd, args, mutation, ctx);
+            // Whether this dot-command leaves us at a fresh statement boundary
+            // for the next iteration. Default: no — the dot-command itself was
+            // mid-statement content as far as the surrounding scanner is
+            // concerned. Override below for the drop+`;` case where consuming
+            // the terminator means the next char IS at a boundary.
+            let nextAtBoundary = false;
             if (result.kind === "drop") {
                 // Discard the command and any whitespace that led up to it.
+                // Also consume a trailing `;` so a single-line `.headers on; SQL`
+                // doesn't leave an empty statement in the output. `\n` is left
+                // alone so it can preserve line structure and re-trigger boundary
+                // detection on the next iteration.
                 buffered = "";
+                if (j < len && sql[j] === ";") {
+                    j++;
+                    // We just consumed the statement terminator — the next iteration
+                    // starts at a real boundary, so a chained `.mode csv` on the same
+                    // line (e.g. `.headers on; .mode csv;`) gets recognized.
+                    nextAtBoundary = true;
+                }
             }
             else if (result.kind === "passthrough") {
                 // Leave the dot-command in place verbatim (sql.js will syntax-error).
@@ -430,7 +456,7 @@ async function preprocessDotCommandsInternal(sql, mutation, ctx) {
                 }
             }
             i = j;
-            atBoundary = false;
+            atBoundary = nextAtBoundary;
             continue;
         }
         // Regular character — flush buffer, emit, leave boundary.
