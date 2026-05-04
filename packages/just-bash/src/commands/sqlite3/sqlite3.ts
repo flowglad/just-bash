@@ -616,12 +616,15 @@ export const sqlite3Command: Command = {
       }
       // Pure formatter mutations / dot-commands with no SQL: short-circuit
       // instead of sending whitespace to the worker. Real sqlite3 emits
-      // nothing in this case.
+      // nothing in this case. Without -bail, dot-command errors are routed
+      // to stdout to match the in-band reporting used for SQL errors below
+      // (so callers reading a single channel see results and errors in
+      // script order).
       if (!sql) {
-        const stderr = dotError ? `${dotError}\n` : "";
+        const stdout = dotError ? `${dotError}\n` : "";
         return {
-          stdout: "",
-          stderr,
+          stdout,
+          stderr: "",
           exitCode: dotError !== undefined ? 1 : 0,
         };
       }
@@ -746,12 +749,18 @@ export const sqlite3Command: Command = {
       }
     }
 
-    const stderr = dotError ? `${dotError}\n` : "";
+    // Without -bail, dot-command errors are emitted in stdout alongside SQL
+    // results (matches inline SQL error routing — preprocessing stops at the
+    // first bad dot-command, so SQL accumulated up to that point precedes
+    // the error in script order).
+    if (dotError) {
+      stdout += `${dotError}\n`;
+    }
     // dotError always causes exit 1 (matches real sqlite3).
     // hadError without -bail doesn't (pre-existing behaviour preserved);
     // hadError with -bail already returned early in the loop above.
     const exitCode = dotError !== undefined ? 1 : 0;
-    return { stdout, stderr, exitCode };
+    return { stdout, stderr: "", exitCode };
   },
 };
 

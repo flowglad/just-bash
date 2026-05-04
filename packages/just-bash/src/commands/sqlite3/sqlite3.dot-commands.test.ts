@@ -136,7 +136,8 @@ describe("sqlite3 dot-commands", () => {
       const env = new Bash();
       const script = `.mode parquet\nSELECT 1`;
       const result = await env.exec(`sqlite3 :memory: '${script}'`);
-      expect(result.stderr).toBe("Error: unknown mode: parquet\n");
+      expect(result.stdout).toBe("Error: unknown mode: parquet\n");
+      expect(result.stderr).toBe("");
       expect(result.exitCode).toBe(1);
     });
   });
@@ -157,7 +158,8 @@ describe("sqlite3 dot-commands", () => {
       const env = new Bash();
       const script = `.separator\nSELECT 1`;
       const result = await env.exec(`sqlite3 :memory: '${script}'`);
-      expect(result.stderr).toBe("Error: .separator requires an argument\n");
+      expect(result.stdout).toBe("Error: .separator requires an argument\n");
+      expect(result.stderr).toBe("");
       expect(result.exitCode).toBe(1);
     });
   });
@@ -216,7 +218,8 @@ EOF`,
       const result = await env.exec(
         'sqlite3 :memory: ".read /workspace/does_not_exist.sql"',
       );
-      expect(result.stderr).toContain("Error: cannot open");
+      expect(result.stdout).toContain("Error: cannot open");
+      expect(result.stderr).toBe("");
       expect(result.exitCode).toBe(1);
     });
   });
@@ -246,9 +249,10 @@ EOF`,
       it(`${cmd} is rejected with "not supported by just-bash sqlite3"`, async () => {
         const env = new Bash();
         const result = await env.exec(`sqlite3 :memory: '${cmd} foo bar'`);
-        expect(result.stderr).toBe(
+        expect(result.stdout).toBe(
           `Error: ${cmd} is not supported by just-bash sqlite3\n`,
         );
+        expect(result.stderr).toBe("");
         expect(result.exitCode).toBe(1);
       });
     }
@@ -258,9 +262,10 @@ EOF`,
     it("returns sqlite3-shaped error", async () => {
       const env = new Bash();
       const result = await env.exec('sqlite3 :memory: ".bogus arg1 arg2"');
-      expect(result.stderr).toBe(
+      expect(result.stdout).toBe(
         'Error: unknown command or invalid arguments: "bogus". Enter ".help" for help\n',
       );
+      expect(result.stderr).toBe("");
       expect(result.exitCode).toBe(1);
     });
   });
