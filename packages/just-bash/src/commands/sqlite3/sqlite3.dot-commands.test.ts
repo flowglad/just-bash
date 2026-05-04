@@ -3,16 +3,42 @@
  *
  * Real sqlite3 supports CLI dot-commands (`.tables`, `.schema`, `.mode csv`,
  * `.read script.sql`, ...). The Braintrust trace catalogue showed agents
- * never used them — but as we add them as a parity feature, we pin behavior
- * here. D-numbers map to docs/sqlite3-invocation-shapes.md.
+ * reach for these by reflex; the preprocessor pins behavior here.
+ * D-numbers map to docs/sqlite3-invocation-shapes.md.
  *
- * Limitations encoded in the tests below:
- *   - Formatter mutations (`.mode`, `.headers`, `.separator`) are global
- *     within a single sqlite3 invocation. Last write wins. Real sqlite3
- *     applies them incrementally.
- *   - `.tables` output is one-name-per-line, not real sqlite3's 3-column
- *     space-padded format.
- *   - `.import` and `.dump` are intentionally unsupported (separate issues).
+ * Contract (see dot-commands.ts for the full rationale):
+ *
+ *   - The scanner is char-level and tracks SQL string literals and
+ *     comments, so `.foo` inside `'…'`, `"…"`, `-- …`, or `/* … *​/`
+ *     is left intact. Boundaries are start-of-input, `;`, `\n`.
+ *
+ *   - `.tables`, `.schema`, `.indexes`/`.indices`, `.databases`, `.help`
+ *     translate to equivalent SQL or SELECTs.
+ *
+ *   - `.headers` / `.header` (on/off), `.mode <mode>`, `.separator <s>`,
+ *     `.nullvalue <text>` mutate formatter state for downstream SQL.
+ *     Bad arguments surface a preprocessor error.
+ *
+ *   - `.echo` / `.timer` / `.changes` / `.bail` / `.show` / `.eqp` /
+ *     `.width` / `.prompt` / `.print` / `.explain` are silently dropped.
+ *
+ *   - `.read FILE` opens the file and inlines its contents (recursive,
+ *     bounded by MAX_READ_DEPTH); missing files / bad args surface a
+ *     preprocessor error.
+ *
+ *   - `.dump` / `.save` / `.import` / `.backup` / `.restore` / `.open` /
+ *     `.clone` / `.output` / `.shell` / `.system` / `.cd` / `.load` /
+ *     `.iotrace` / `.log` / `.excel` aren't implemented; each emits an
+ *     in-band SELECT carrying an actionable hint.
+ *
+ *   - `.quit` / `.exit` terminate preprocessing.
+ *
+ *   - Unknown dot-commands fall through verbatim so sql.js produces its
+ *     native `near ".": syntax error`.
+ *
+ *   - Without -bail, preprocessor errors are appended to stdout (in-band
+ *     with SQL output) and the invocation still exits 1; with -bail the
+ *     error goes to stderr and we short-circuit the SQL execution.
  */
 import { describe, expect, it } from "vitest";
 import { Bash } from "../../Bash.js";
@@ -30,13 +56,31 @@ describe("sqlite3 dot-commands", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    it("filters by LIKE pattern", async () => {
+    it("filters by quoted LIKE pattern", async () => {
       const env = new Bash();
       await env.exec(
         "sqlite3 /db.sqlite 'CREATE TABLE orders(id INT); CREATE TABLE order_items(id INT); CREATE TABLE refunds(id INT)'",
       );
       const result = await env.exec("sqlite3 /db.sqlite \".tables 'order%'\"");
       expect(result.stdout).toBe("order_items\norders\n");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("converts shell-style `*` to SQL `%`", async () => {
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 :memory: "CREATE TABLE users(id INT); CREATE TABLE orders(id INT); .tables user*"',
+      );
+      expect(result.stdout.trim()).toBe("users");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("converts shell-style `?` to SQL `_`", async () => {
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 :memory: "CREATE TABLE ab(id INT); CREATE TABLE abc(id INT); .tables a?"',
+      );
+      expect(result.stdout.trim()).toBe("ab");
       expect(result.exitCode).toBe(0);
     });
 
@@ -96,6 +140,16 @@ describe("sqlite3 dot-commands", () => {
       expect(result.stdout).toBe("x\n42\n");
       expect(result.exitCode).toBe(0);
     });
+
+    it("rejects unknown argument", async () => {
+      const env = new Bash();
+      const script = `.headers maybe\nSELECT 1`;
+      const result = await env.exec(`sqlite3 :memory: '${script}'`);
+      expect(result.stdout).toContain(
+        "Error: unknown argument to .headers: maybe",
+      );
+      expect(result.exitCode).toBe(1);
+    });
   });
 
   describe("D4: .mode", () => {
@@ -132,12 +186,20 @@ describe("sqlite3 dot-commands", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    it("rejects unknown mode", async () => {
+    it("rejects unknown mode without -bail (in-band on stdout)", async () => {
       const env = new Bash();
       const script = `.mode parquet\nSELECT 1`;
       const result = await env.exec(`sqlite3 :memory: '${script}'`);
-      expect(result.stdout).toBe("Error: unknown mode: parquet\n");
-      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Error: unknown mode: parquet");
+      expect(result.exitCode).toBe(1);
+    });
+
+    it("with -bail, .mode parquet errors to stderr and short-circuits", async () => {
+      const env = new Bash();
+      const script = `.mode parquet\nSELECT 1`;
+      const result = await env.exec(`sqlite3 -bail :memory: '${script}'`);
+      expect(result.stderr).toBe("Error: unknown mode: parquet\n");
+      expect(result.stdout).toBe("");
       expect(result.exitCode).toBe(1);
     });
   });
@@ -158,8 +220,7 @@ describe("sqlite3 dot-commands", () => {
       const env = new Bash();
       const script = `.separator\nSELECT 1`;
       const result = await env.exec(`sqlite3 :memory: '${script}'`);
-      expect(result.stdout).toBe("Error: .separator requires an argument\n");
-      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Error: .separator requires an argument");
       expect(result.exitCode).toBe(1);
     });
   });
@@ -213,77 +274,144 @@ EOF`,
       expect(result.exitCode).toBe(0);
     });
 
-    it("errors on missing file", async () => {
+    it("errors on missing file with `cannot open` matching real sqlite3", async () => {
       const env = new Bash();
       const result = await env.exec(
         'sqlite3 :memory: ".read /workspace/does_not_exist.sql"',
       );
-      expect(result.stdout).toContain("Error: cannot open");
-      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("cannot open");
+      expect(result.stdout).toContain("/workspace/does_not_exist.sql");
+      expect(result.exitCode).toBe(1);
+    });
+
+    it("errors on missing argument", async () => {
+      const env = new Bash();
+      const result = await env.exec('sqlite3 :memory: ".read"');
+      expect(result.stdout).toContain("Error: usage: .read FILE");
       expect(result.exitCode).toBe(1);
     });
   });
 
-  describe("D8: .import (unsupported)", () => {
-    it.todo("loads CSV into a table — see github issue: not yet implemented");
-  });
-
-  describe("D9: .dump (unsupported)", () => {
-    it.todo(
-      "dumps schema + INSERT statements — see github issue: not yet implemented",
-    );
-  });
-
-  describe("explicitly unsupported dot-commands surface a clear error", () => {
-    for (const cmd of [
-      ".import",
-      ".dump",
-      ".clone",
-      ".save",
-      ".restore",
-      ".backup",
-      ".open",
-      ".shell",
-      ".system",
-    ]) {
-      it(`${cmd} is rejected with "not supported by just-bash sqlite3"`, async () => {
-        const env = new Bash();
-        const result = await env.exec(`sqlite3 :memory: '${cmd} foo bar'`);
-        expect(result.stdout).toBe(
-          `Error: ${cmd} is not supported by just-bash sqlite3\n`,
-        );
-        expect(result.stderr).toBe("");
-        expect(result.exitCode).toBe(1);
-      });
-    }
-  });
-
-  describe("unknown dot-command", () => {
-    it("returns sqlite3-shaped error", async () => {
+  describe("D8: not-implemented family (in-band SELECT)", () => {
+    it.each([
+      [".dump", "query sqlite_master"],
+      [".save /tmp/x.db", "redirect with shell"],
+      [".backup /tmp/x.db", "redirect with shell"],
+      [".import data.csv t", "INSERTs from a SQL script"],
+      [".clone other.db", "INSERT INTO ... SELECT"],
+      [".restore /tmp/x.db", "open the file directly"],
+      [".open other.db", "open the file directly"],
+      [".output /tmp/x.txt", "redirect output with shell"],
+      [".shell ls", "use bash for shell commands"],
+      [".system ls", "use bash for shell commands"],
+      [".cd /tmp", "use bash 'cd'"],
+      [".load ext.so", "extension loading is disabled"],
+    ])("%s emits an in-band SELECT with an actionable hint", async (invocation, hintFragment) => {
       const env = new Bash();
-      const result = await env.exec('sqlite3 :memory: ".bogus arg1 arg2"');
-      expect(result.stdout).toBe(
-        'Error: unknown command or invalid arguments: "bogus". Enter ".help" for help\n',
-      );
-      expect(result.stderr).toBe("");
-      expect(result.exitCode).toBe(1);
+      const result = await env.exec(`sqlite3 :memory: '${invocation}'`);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(invocation.split(/\s+/, 1)[0]);
+      expect(result.stdout).toContain("is not implemented in just-bash");
+      expect(result.stdout).toContain(hintFragment);
     });
   });
 
-  describe("interleaved mode + query", () => {
-    it("`.mode csv` followed by SELECT then `.mode list` — last mode wins (documented limitation)", async () => {
+  describe("D9: silent no-op metacommands", () => {
+    it.each([
+      ".echo on",
+      ".timer off",
+      ".changes on",
+      ".bail off",
+      ".show",
+      ".eqp on",
+      ".width 10 20",
+      ".print hello",
+      ".explain on",
+    ])("%s is silently dropped", async (cmd) => {
       const env = new Bash();
-      await env.exec(
-        `sqlite3 /db.sqlite "CREATE TABLE t(a INT, b INT); INSERT INTO t VALUES (1, 2)"`,
-      );
-      const script = `.mode csv\nSELECT * FROM t;\n.mode list\nSELECT * FROM t`;
-      const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
-      expect(result.stdout).toBe("1|2\n1|2\n");
+      const script = `${cmd}\nSELECT 1`;
+      const result = await env.exec(`sqlite3 :memory: '${script}'`);
+      expect(result.stdout).toBe("1\n");
       expect(result.exitCode).toBe(0);
     });
   });
 
-  describe(".quit / .exit", () => {
+  describe("D10: unknown dot-commands fall through to sql.js", () => {
+    it(".bogus_command produces sql.js's native syntax error", async () => {
+      const env = new Bash();
+      const result = await env.exec('sqlite3 :memory: ".bogus_command"');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("syntax error");
+    });
+  });
+
+  describe("D11: SQL string literals and comments are preserved", () => {
+    it("does not corrupt single-quoted string literals containing dot-command-like text", async () => {
+      const env = new Bash();
+      const result = await env.exec(
+        `sqlite3 :memory: "CREATE TABLE t(s TEXT); INSERT INTO t VALUES('node.js'); SELECT * FROM t"`,
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("node.js");
+    });
+
+    it("does not corrupt multiline single-quoted literals containing `\\n.tables`", async () => {
+      // Real regression case: a newline-prefixed dot-command-like fragment
+      // inside a string literal would be picked up by a line-based scanner
+      // and rewritten into a SELECT against sqlite_master, mangling the row.
+      const env = new Bash();
+      const result = await env.exec(
+        `sqlite3 :memory: <<'SQL'\nCREATE TABLE t(s TEXT);\nINSERT INTO t VALUES('a\n.tables');\nSELECT s FROM t;\nSQL`,
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("a\n.tables");
+    });
+
+    it("does not translate dot-commands inside SQL `--` line comments", async () => {
+      const env = new Bash();
+      const result = await env.exec(
+        `sqlite3 :memory: <<'SQL'\n-- .read foo.sql\nSELECT 1;\nSQL`,
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("1");
+    });
+
+    it("does not translate dot-commands inside SQL `/* */` block comments", async () => {
+      const env = new Bash();
+      const result = await env.exec(
+        `sqlite3 :memory: <<'SQL'\n/* .read foo.sql */\nSELECT 1;\nSQL`,
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("1");
+    });
+  });
+
+  describe("D12: inline `;`-separated dot-commands and SQL", () => {
+    it("formatter mutations on the same line apply to subsequent SQL", async () => {
+      // The scanner recognizes each `;`-separated segment as its own
+      // boundary. `.headers on; .mode csv;` flips header and mode, then
+      // CREATE/INSERT/SELECT runs with both applied.
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 :memory: ".headers on; .mode csv; CREATE TABLE t(x); INSERT INTO t VALUES(42); SELECT * FROM t;"',
+      );
+      expect(result.stdout).toBe("x\n42\n");
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("D13: .help", () => {
+    it("emits the supported-commands summary", async () => {
+      const env = new Bash();
+      const result = await env.exec('sqlite3 :memory: ".help"');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Supported dot commands");
+      expect(result.stdout).toContain(".tables");
+      expect(result.stdout).toContain(".mode");
+    });
+  });
+
+  describe("D14: .quit / .exit terminate preprocessing", () => {
     it(".quit stops processing — SQL after it is dropped", async () => {
       const env = new Bash();
       await env.exec(
@@ -328,6 +456,80 @@ EOF`,
         'sqlite3 /db.sqlite "SELECT x FROM t ORDER BY x"',
       );
       expect(after.stdout).toBe("1\n");
+    });
+  });
+
+  describe("D15: scanner edge cases (review-pinned regressions)", () => {
+    it("a `;`-terminated drop does not leak an empty statement into the output", async () => {
+      // The scanner consumes the trailing `;` after a dropped command
+      // (`.headers on;` etc.) so `-echo` doesn't show a leading orphan
+      // `;` and downstream consumers of the emitted SQL don't see an
+      // empty statement.
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 -echo :memory: ".headers on; SELECT 1"',
+      );
+      // -echo prints the SQL exactly as sent to the worker. We want no
+      // leading `;` (empty statement) and no leading whitespace either.
+      expect(result.stdout.startsWith(";")).toBe(false);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a chained drop after a consumed `;` re-recognizes the next dot-command", async () => {
+      // After `.headers on;`'s trailing `;` is consumed, the scanner
+      // must treat the next char as if at a fresh boundary so `.mode csv`
+      // is also recognized. Pinned via the formatter mutation it should
+      // produce.
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 :memory: ".headers on; .mode csv; CREATE TABLE t(x); INSERT INTO t VALUES (42); SELECT * FROM t;"',
+      );
+      // Both .headers on and .mode csv applied → CSV with header row.
+      expect(result.stdout).toBe("x\n42\n");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a block comment does not leave the scanner at a boundary", async () => {
+      // `;` then `/* … */` then `.tables` (no intervening newline) used
+      // to fire the dot-command branch because the block-comment handler
+      // didn't reset atBoundary. `.tables` here must NOT be rewritten —
+      // sql.js will syntax-error on it instead.
+      const env = new Bash();
+      const result = await env.exec(
+        'sqlite3 :memory: "SELECT 1;/* note */.tables"',
+      );
+      // `.tables` falls through verbatim → sql.js syntax error in stdout.
+      expect(result.stdout).toContain("1");
+      expect(result.stdout).toContain("syntax error");
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("a block comment on its own line followed by a newline still allows .tables on the next line", async () => {
+      // Sanity: with a `\n` between `*/` and the next line, the boundary
+      // detection on `\n` re-arms atBoundary, so `.tables` on the next
+      // line IS recognized. The block-comment-doesn't-reset-atBoundary
+      // fix targets the same-line case only.
+      const env = new Bash();
+      await env.exec(
+        "sqlite3 /db.sqlite 'CREATE TABLE alpha(x INT)'",
+      );
+      const script = `/* preamble */\n.tables`;
+      const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
+      expect(result.stdout.trim()).toBe("alpha");
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("D16: interleaved .mode + query (last write wins)", () => {
+    it("`.mode csv` followed by SELECT then `.mode list` — last mode wins (documented limitation)", async () => {
+      const env = new Bash();
+      await env.exec(
+        `sqlite3 /db.sqlite "CREATE TABLE t(a INT, b INT); INSERT INTO t VALUES (1, 2)"`,
+      );
+      const script = `.mode csv\nSELECT * FROM t;\n.mode list\nSELECT * FROM t`;
+      const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
+      expect(result.stdout).toBe("1|2\n1|2\n");
+      expect(result.exitCode).toBe(0);
     });
   });
 });
