@@ -510,9 +510,7 @@ EOF`,
       // line IS recognized. The block-comment-doesn't-reset-atBoundary
       // fix targets the same-line case only.
       const env = new Bash();
-      await env.exec(
-        "sqlite3 /db.sqlite 'CREATE TABLE alpha(x INT)'",
-      );
+      await env.exec("sqlite3 /db.sqlite 'CREATE TABLE alpha(x INT)'");
       const script = `/* preamble */\n.tables`;
       const result = await env.exec(`sqlite3 /db.sqlite '${script}'`);
       expect(result.stdout.trim()).toBe("alpha");

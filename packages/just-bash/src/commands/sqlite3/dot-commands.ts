@@ -525,7 +525,7 @@ async function preprocessDotCommandsInternal(
         return {
           sql: out,
           formatterMutation: mutation,
-          error: result.message,
+          error: sanitizeErrorMessage(result.message),
         };
       } else {
         // kind === "sql"
