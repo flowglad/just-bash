@@ -9,11 +9,17 @@ export interface FormField {
   contentType?: string;
 }
 
+export interface DataPart {
+  value: string;
+}
+
 export interface CurlOptions {
   method: string;
   headers: Headers;
   data?: string;
+  dataParts: DataPart[];
   dataBinary: boolean;
+  getMode: boolean;
   formFields: FormField[];
   user?: string;
   uploadFile?: string;
