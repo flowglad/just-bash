@@ -63,12 +63,21 @@ async function prepareRequestBody(
   }
 
   // Handle -d/--data variants
-  if (options.data !== undefined) {
-    return { body: options.data };
+  if (options.data !== undefined && !options.getMode) {
+    return {
+      body: options.data,
+      contentType: "application/x-www-form-urlencoded",
+    };
   }
 
   // @banned-pattern-ignore: returns typed object with known keys (body, contentType), not user data
   return {};
+}
+
+function appendDataToUrl(url: string, data: string | undefined): string {
+  if (!data) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${data}`;
 }
 
 /**
@@ -212,6 +221,10 @@ export const curlCommand: Command = {
     let url = options.url;
     if (!url.match(/^https?:\/\//)) {
       url = `https://${url}`;
+    }
+
+    if (options.getMode) {
+      url = appendDataToUrl(url, options.data);
     }
 
     try {

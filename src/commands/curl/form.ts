@@ -4,9 +4,16 @@
 
 import type { FormField } from "./types.js";
 
+function encodeRfc3986(value: string): string {
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
 /**
  * URL-encode form data in curl's --data-urlencode format
- * Supports: name=content, =content, name@file, @file
+ * Supports: name=content, =content, content. File forms are rejected by parseOptions.
  */
 export function encodeFormData(input: string): string {
   // Check for name=value format
@@ -14,13 +21,10 @@ export function encodeFormData(input: string): string {
   if (eqIndex >= 0) {
     const name = input.slice(0, eqIndex);
     const value = input.slice(eqIndex + 1);
-    if (name) {
-      return `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
-    }
-    return encodeURIComponent(value);
+    return `${name}=${encodeRfc3986(value)}`;
   }
   // Plain value
-  return encodeURIComponent(input);
+  return encodeRfc3986(input);
 }
 
 /**

@@ -1,5 +1,14 @@
 # just-bash
 
+## 2.14.5
+
+### Patch Changes
+
+- Add curl `-G`/`--get` query-string data support and ordered `--data-urlencode`,
+  `-d`/`--data`, `--data-raw`, and `--data-binary` payload accumulation. File
+  payload forms such as `--data-urlencode @file` and `-d @file` remain
+  intentionally unsupported and now fail clearly.
+
 ## 2.14.4
 
 ### Patch Changes
