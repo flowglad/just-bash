@@ -42,6 +42,7 @@ export interface WorkerOutput {
   defenseStats?: WorkerDefenseStats;
 }
 
+// @banned-pattern-ignore: worker bootstrap only; Module._load is guarded below and CPython paths are allowlisted
 const require = createRequire(import.meta.url);
 const CPYTHON_ENTRY_BASENAME = "/vendor/cpython-emscripten/python.cjs";
 const CPYTHON_STDLIB_BASENAME = "/vendor/cpython-emscripten/python313.zip";

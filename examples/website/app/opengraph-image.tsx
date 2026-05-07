@@ -28,15 +28,21 @@ export default async function Image() {
           alignItems: "flex-start",
           justifyContent: "flex-start",
           fontFamily: "IBM Plex Mono",
-          padding: "60px 80px",
+          padding: "60px 200px",
         }}
       >
-<pre
+        <div style={{ display: "flex", marginLeft: "-135px", marginTop: "10px" }}>
+          <svg width="56" height="49" viewBox="0 0 112 98" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M56 0L112 98H0L56 0Z" fill="white" />
+          </svg>
+        </div>
+
+        <pre
           style={{
             color: "#fff",
-            fontSize: "28px",
+            fontSize: "32px",
             lineHeight: "1.2",
-            margin: 0,
+            margin: "-50px 0 0 0",
             whiteSpace: "pre",
           }}
         >
@@ -53,41 +59,44 @@ export default async function Image() {
         >
           <div
             style={{
-              color: "#888",
-              fontSize: "24px",
+              color: "#7d7d7d",
+              fontSize: "31px",
+              lineHeight: "1.2",
+              textAlign: "center",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            A sandboxed bash interpreter for AI agents
+            A sandboxed bash interpreter for AI agents.
+            <br />
+            Pure TypeScript with in-memory filesystem.
           </div>
           <div
             style={{
               display: "flex",
-              alignItems: "center",
               gap: "12px",
-              marginTop: "8px",
+              marginTop: "20px",
+              fontSize: "31px",
+              lineHeight: "1.2",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              flexGrow: 1,
+              width: "800px",
             }}
           >
-            <span style={{ color: "#666" }}>$</span>
+            <span style={{ color: "#FFF" }}>$</span>
             <span
               style={{
                 color: "#0AC5B3",
-                fontSize: "32px",
+                fontSize: "31px",
               }}
             >
               npm install just-bash
             </span>
           </div>
-        </div>
-        <div
-          style={{
-            position: "absolute",
-            bottom: "50px",
-            left: "80px",
-            color: "#555",
-            fontSize: "18px",
-          }}
-        >
-          Pure TypeScript | In-memory filesystem
         </div>
       </div>
     ),
