@@ -17,6 +17,7 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import initSqlJs from "sql.js";
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import {
   sanitizeErrorMessage,
   sanitizeHostErrorMessage,
@@ -555,9 +556,15 @@ export const sqlite3Command: Command = {
       };
     }
 
+<<<<<<< HEAD
     // Get SQL from argument or stdin. Prepend -cmd first, then -init on top,
     // so the final execution order is: init content -> cmd -> main SQL.
     let sql = sqlArg || ctx.stdin.trim();
+=======
+    // Get SQL from argument or stdin. SQL is text — decode bytes to UTF-8 so
+    // string literals containing multibyte characters survive intact.
+    let sql = sqlArg || decodeBytesToUtf8(ctx.stdin).trim();
+>>>>>>> @just-bash/executor@1.0.1
     if (options.cmd) {
       sql = options.cmd + (sql ? `; ${sql}` : "");
     }
@@ -754,6 +761,7 @@ export const sqlite3Command: Command = {
       }
     }
 
+<<<<<<< HEAD
     // Without -bail, dot-command errors are emitted in stdout alongside SQL
     // results (matches inline SQL error routing — preprocessing stops at the
     // first bad dot-command, so SQL accumulated up to that point precedes
@@ -766,6 +774,14 @@ export const sqlite3Command: Command = {
     // hadError with -bail already returned early in the loop above.
     const exitCode = dotError !== undefined ? 1 : 0;
     return { stdout, stderr: "", exitCode };
+=======
+    // sqlite3 emits text; the pipeline handles encoding.
+    return {
+      stdout,
+      stderr: "",
+      exitCode: hadError && options.bail ? 1 : 0,
+    };
+>>>>>>> @just-bash/executor@1.0.1
   },
 };
 
