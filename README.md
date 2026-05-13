@@ -29,7 +29,7 @@ Each `exec()` call gets its own isolated shell state — environment variables, 
 Extend just-bash with your own TypeScript commands using `defineCommand`:
 
 ```typescript
-import { Bash, defineCommand } from "just-bash";
+import { Bash, decodeBytesToUtf8, defineCommand } from "just-bash";
 
 const hello = defineCommand("hello", async (args, ctx) => {
   const name = args[0] || "world";
@@ -37,7 +37,12 @@ const hello = defineCommand("hello", async (args, ctx) => {
 });
 
 const upper = defineCommand("upper", async (args, ctx) => {
-  return { stdout: ctx.stdin.toUpperCase(), stderr: "", exitCode: 0 };
+  // ctx.stdin is a ByteString — decode to text before string ops.
+  return {
+    stdout: decodeBytesToUtf8(ctx.stdin).toUpperCase(),
+    stderr: "",
+    exitCode: 0,
+  };
 });
 
 const bash = new Bash({ customCommands: [hello, upper] });
@@ -353,6 +358,37 @@ await env.exec('js-exec -c "console.log(API_BASE)"');
 `fs.readFileSync()` returns a `Buffer` by default (matching Node.js). Pass an encoding like `'utf8'` to get a string.
 
 **Note:** The `js-exec` command only exists when `javascript` is configured. It is not available in browser environments. Execution runs in a QuickJS WASM sandbox with a 64 MB memory limit and configurable timeout (default: 10s, 60s with network).
+
+#### Tool Invocation Hook
+
+`js-exec` scripts can call host-defined tools through a global `tools` proxy
+when `javascript.invokeTool` is provided:
+
+```typescript
+const bash = new Bash({
+  javascript: {
+    // path:     "math.add"  (dot-separated)
+    // argsJson: '{"a":1,"b":2}'  (or "" for no args)
+    // return:   JSON-stringified result, or "" for undefined
+    // throw:    propagates as a sandbox exception
+    invokeTool: async (path, argsJson) => {
+      const args = argsJson ? JSON.parse(argsJson) : undefined;
+      if (path === "math.add") {
+        return JSON.stringify({ sum: args.a + args.b });
+      }
+      throw new Error(`Unknown tool: ${path}`);
+    },
+  },
+});
+
+await bash.exec(`js-exec -c 'console.log((await tools.math.add({a:3,b:4})).sum)'`);
+```
+
+The hook is generic — wire any tool framework through it (raw maps, MCP,
+Anthropic tool-use, etc.). For full GraphQL / OpenAPI / MCP discovery via
+`@executor-js/sdk`, plus auto-generated bash namespace commands, use the
+companion package
+[**`@just-bash/executor`**](../just-bash-executor/README.md).
 
 ### Python Support
 
