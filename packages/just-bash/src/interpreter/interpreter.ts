@@ -23,6 +23,11 @@ import type {
   SubshellNode,
   WordNode,
 } from "../ast/types.js";
+import {
+  encodeUtf8ToBytes,
+  latin1FromBytes,
+  readBytesFrom,
+} from "../encoding.js";
 import type { IFileSystem } from "../fs/interface.js";
 import { mapToRecord } from "../helpers/env.js";
 import type { ExecutionLimits } from "../limits.js";
@@ -134,6 +139,8 @@ export interface InterpreterOptions {
   requireDefenseContext?: boolean;
   /** Bootstrap JavaScript code for js-exec */
   jsBootstrapCode?: string;
+  /** Tool invoker hook for js-exec's `tools` proxy */
+  invokeTool?: (path: string, argsJson: string) => Promise<string>;
 }
 
 export class Interpreter {
@@ -155,6 +162,7 @@ export class Interpreter {
       coverage: options.coverage,
       requireDefenseContext: options.requireDefenseContext ?? false,
       jsBootstrapCode: options.jsBootstrapCode,
+      invokeTool: options.invokeTool,
     };
   }
 
@@ -655,6 +663,12 @@ export class Interpreter {
             .map((line) => line.replace(/^\t+/, ""))
             .join("\n");
         }
+        // Heredocs land here as JS Unicode text; the pipeline contract
+        // expects stdin to be a latin1 byte buffer. UTF-8 encode the
+        // text once at the source so byte consumers downstream see real
+        // bytes and binary writes don't truncate codepoints to their
+        // low byte.
+        content = latin1FromBytes(encodeUtf8ToBytes(content));
         // If this is a non-standard fd (not 0), store in fileDescriptors for -u option
         const fd = redir.fd ?? 0;
         if (fd !== 0) {
@@ -670,7 +684,13 @@ export class Interpreter {
       }
 
       if (redir.operator === "<<<" && redir.target.type === "Word") {
-        stdin = `${await expandWord(this.ctx, redir.target as WordNode)}\n`;
+        // Same byte-encoding step as heredoc — here-strings deliver
+        // JS Unicode text and need to land as bytes.
+        stdin = latin1FromBytes(
+          encodeUtf8ToBytes(
+            `${await expandWord(this.ctx, redir.target as WordNode)}\n`,
+          ),
+        );
         continue;
       }
 
@@ -678,7 +698,10 @@ export class Interpreter {
         try {
           const target = await expandWord(this.ctx, redir.target as WordNode);
           const filePath = this.ctx.fs.resolvePath(this.ctx.state.cwd, target);
-          stdin = await this.ctx.fs.readFile(filePath);
+          // Read as raw bytes — `<` is a transparent file-to-stdin
+          // pipe and we don't want the smart-utf8 read path turning
+          // valid bytes into U+FFFD replacement chars.
+          stdin = latin1FromBytes(await readBytesFrom(this.ctx.fs, filePath));
         } catch {
           const target = await expandWord(this.ctx, redir.target as WordNode);
           for (const [name, value] of tempAssignments) {
