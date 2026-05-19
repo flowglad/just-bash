@@ -10,6 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { sanitizeErrorMessage, sanitizeHostErrorMessage, } from "../../fs/sanitize-error.js";
 import { mapToRecord } from "../../helpers/env.js";
 import { getErrorMessage } from "../../interpreter/helpers/errors.js";
@@ -317,51 +318,23 @@ async function executeJS(jsCode, ctx, scriptPath, scriptArgs = [], bootstrapCode
     }
     return executeJSInner(jsCode, ctx, scriptPath, scriptArgs, bootstrapCode, isModule, stripTypes);
 }
-async function executeJSInner(jsCode, ctx, scriptPath, scriptArgs = [], bootstrapCode, isModule, stripTypes) {
-    const sharedBuffer = createSharedBuffer();
-    // Wrap ctx.exec to set AsyncLocalStorage context for re-entrant detection.
-    // When js-exec's bridge calls exec (child_process.execSync), any nested
-    // js-exec call will see the context and fail fast instead of deadlocking.
-    const execFn = ctx.exec;
-    const wrappedExec = execFn
-        ? (command, options) => jsExecAsyncContext.run(true, () => execFn(command, options))
-        : undefined;
-    const bridgeHandler = new BridgeHandler(sharedBuffer, ctx.fs, ctx.cwd, "js-exec", ctx.fetch, ctx.limits?.maxOutputSize ?? 0, wrappedExec);
-    // Network operations need a longer timeout. resolveLimits() always populates
-    // maxJsTimeoutMs (default 10s), so use the network default as a floor.
-    const userTimeout = ctx.limits?.maxJsTimeoutMs ?? DEFAULT_JS_TIMEOUT_MS;
-    const timeoutMs = ctx.fetch
-        ? Math.max(userTimeout, DEFAULT_JS_NETWORK_TIMEOUT_MS)
-        : userTimeout;
-    const protocolToken = randomBytes(16).toString("hex");
-    const workerInput = {
-        protocolToken,
-        sharedBuffer,
-        jsCode,
-        cwd: ctx.cwd,
-        env: mapToRecord(ctx.env),
-        args: scriptArgs,
-        scriptPath,
-        bootstrapCode,
-        isModule,
-        stripTypes,
-        timeoutMs,
-    };
-    // Use deferred pattern to keep queue management outside the Promise constructor
+/**
+ * Shared queue-and-run logic: sets up the bridge, queues the worker input,
+ * handles timeout, and returns the raw bridge output + worker result.
+ */
+async function queueAndRun(workerInput, bridgeHandler, timeoutMs) {
     let resolveWorker;
     const workerPromise = new Promise((resolve) => {
         resolveWorker = resolve;
     });
     const queueEntry = {
         input: workerInput,
-        resolve: () => { }, // replaced below
+        resolve: () => { },
     };
     const timeoutHandle = _setTimeout(() => {
         if (currentExecution === queueEntry) {
-            // Worker is running — terminate it
             const workerToTerminate = sharedWorker;
             if (workerToTerminate) {
-                // Clear global worker reference before starting the next queued task.
                 sharedWorker = null;
                 void workerToTerminate.terminate();
             }
@@ -369,7 +342,6 @@ async function executeJSInner(jsCode, ctx, scriptPath, scriptArgs = [], bootstra
             processNextExecution();
         }
         else {
-            // Worker hasn't started — mark canceled so processNextExecution skips it
             queueEntry.canceled = true;
             if (!currentExecution) {
                 processNextExecution();
@@ -384,19 +356,51 @@ async function executeJSInner(jsCode, ctx, scriptPath, scriptArgs = [], bootstra
         _clearTimeout(timeoutHandle);
         resolveWorker(result);
     };
-    // Queue the execution (serialized since QuickJS is single-threaded)
     executionQueue.push(queueEntry);
     processNextExecution();
     const [bridgeOutput, workerResult] = await Promise.all([
         bridgeHandler.run(timeoutMs),
-        workerPromise.catch((e) => {
-            const workerError = sanitizeHostErrorMessage(getErrorMessage(e));
-            return {
-                success: false,
-                error: workerError,
-            };
-        }),
+        workerPromise.catch((e) => ({
+            success: false,
+            error: sanitizeHostErrorMessage(getErrorMessage(e)),
+        })),
     ]);
+    return { bridgeOutput, workerResult };
+}
+/** Resolve the effective timeout for a js-exec execution. */
+function resolveTimeout(ctx) {
+    const userTimeout = ctx.limits?.maxJsTimeoutMs ?? DEFAULT_JS_TIMEOUT_MS;
+    return ctx.fetch
+        ? Math.max(userTimeout, DEFAULT_JS_NETWORK_TIMEOUT_MS)
+        : userTimeout;
+}
+async function executeJSInner(jsCode, ctx, scriptPath, scriptArgs = [], bootstrapCode, isModule, stripTypes) {
+    const sharedBuffer = createSharedBuffer();
+    // Wrap ctx.exec to set AsyncLocalStorage context for re-entrant detection.
+    // When js-exec's bridge calls exec (child_process.execSync), any nested
+    // js-exec call will see the context and fail fast instead of deadlocking.
+    const execFn = ctx.exec;
+    const wrappedExec = execFn
+        ? (command, options) => jsExecAsyncContext.run(true, () => execFn(command, options))
+        : undefined;
+    const bridgeHandler = new BridgeHandler(sharedBuffer, ctx.fs, ctx.cwd, "js-exec", ctx.fetch, ctx.limits?.maxOutputSize ?? 0, wrappedExec, ctx.invokeTool);
+    const timeoutMs = resolveTimeout(ctx);
+    const protocolToken = randomBytes(16).toString("hex");
+    const workerInput = {
+        protocolToken,
+        sharedBuffer,
+        jsCode,
+        cwd: ctx.cwd,
+        env: mapToRecord(ctx.env),
+        args: scriptArgs,
+        scriptPath,
+        bootstrapCode,
+        isModule,
+        stripTypes,
+        timeoutMs,
+        hasInvokeTool: ctx.invokeTool !== undefined,
+    };
+    const { bridgeOutput, workerResult } = await queueAndRun(workerInput, bridgeHandler, timeoutMs);
     if (!workerResult.success && workerResult.error) {
         return {
             stdout: bridgeOutput.stdout,
@@ -404,7 +408,10 @@ async function executeJSInner(jsCode, ctx, scriptPath, scriptArgs = [], bootstra
             exitCode: bridgeOutput.exitCode || 1,
         };
     }
-    return bridgeOutput;
+    // js-exec emits text; the pipeline handles encoding.
+    return {
+        ...bridgeOutput,
+    };
 }
 export const jsExecCommand = {
     name: "js-exec",
@@ -449,8 +456,10 @@ export const jsExecCommand = {
                 };
             }
         }
-        else if (ctx.stdin.trim()) {
-            jsCode = ctx.stdin;
+        else if (decodeBytesToUtf8(ctx.stdin).trim()) {
+            // Decode bytes — JS source can contain unicode identifiers and string
+            // literals; running latin1 bytes as code corrupts them.
+            jsCode = decodeBytesToUtf8(ctx.stdin);
             scriptPath = "<stdin>";
         }
         else {

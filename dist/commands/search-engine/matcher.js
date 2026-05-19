@@ -2,6 +2,22 @@
  * Core content matching logic for search commands
  */
 /**
+ * Substring fast-path check: returns true if at least one needle is present
+ * in the line, meaning the regex *might* match. False means provably no match.
+ *
+ * For case-insensitive filters, the line is lowercased once per call. Both the
+ * needles and the line are compared in lowercase.
+ */
+function preFilterMatches(preFilter, line) {
+    const haystack = preFilter.ignoreCase ? line.toLowerCase() : line;
+    const needles = preFilter.needles;
+    for (let i = 0; i < needles.length; i++) {
+        if (haystack.indexOf(needles[i]) !== -1)
+            return true;
+    }
+    return false;
+}
+/**
  * Apply a replacement pattern using capture groups from a regex match
  * Supports: $& (full match), $1-$9 (numbered groups), $<name> (named groups)
  */
@@ -31,7 +47,7 @@ function applyReplacement(replacement, match) {
  * - Max count (-m)
  */
 export function searchContent(content, regex, options = {}) {
-    const { invertMatch = false, showLineNumbers = false, countOnly = false, countMatches = false, filename = "", onlyMatching = false, beforeContext = 0, afterContext = 0, maxCount = 0, contextSeparator = "--", showColumn = false, vimgrep = false, showByteOffset = false, replace = null, passthru = false, multiline = false, kResetGroup, } = options;
+    const { invertMatch = false, showLineNumbers = false, countOnly = false, countMatches = false, filename = "", onlyMatching = false, beforeContext = 0, afterContext = 0, maxCount = 0, contextSeparator = "--", showColumn = false, vimgrep = false, showByteOffset = false, replace = null, passthru = false, multiline = false, kResetGroup, preFilter, } = options;
     // Multiline mode: search entire content as one string
     if (multiline) {
         return searchContentMultiline(content, regex, {
@@ -61,10 +77,17 @@ export function searchContent(content, regex, options = {}) {
         // --count --only-matching behaves like --count-matches
         const shouldCountMatches = (countMatches || onlyMatching) && !invertMatch;
         for (let i = 0; i < lastIdx; i++) {
+            const line = lines[i];
+            // Pre-filter: skip lines that can't contain any required literal.
+            // For invertMatch=true (-vc), a no-match line still counts, so we
+            // can't skip it — only short-circuit when not inverting.
+            if (preFilter && !invertMatch && !preFilterMatches(preFilter, line)) {
+                continue;
+            }
             regex.lastIndex = 0;
             if (shouldCountMatches) {
                 // Count individual matches on the line
-                for (let match = regex.exec(lines[i]); match !== null; match = regex.exec(lines[i])) {
+                for (let match = regex.exec(line); match !== null; match = regex.exec(line)) {
                     matchCount++;
                     if (match[0].length === 0)
                         regex.lastIndex++;
@@ -72,7 +95,7 @@ export function searchContent(content, regex, options = {}) {
             }
             else {
                 // Count lines (with matches, or without matches if inverted)
-                if (regex.test(lines[i]) !== invertMatch) {
+                if (regex.test(line) !== invertMatch) {
                     matchCount++;
                 }
             }
@@ -93,14 +116,26 @@ export function searchContent(content, regex, options = {}) {
             if (maxCount > 0 && matchCount >= maxCount)
                 break;
             const line = lines[i];
-            regex.lastIndex = 0;
-            const matches = regex.test(line);
+            // Substring pre-filter: when no extracted needle is present, the
+            // regex provably cannot match. String.indexOf is ~50x faster than
+            // RE2.find() for short inputs, so we skip the regex for the bulk
+            // of unmatching lines.
+            let firstMatch = null;
+            if (preFilter && !preFilterMatches(preFilter, line)) {
+                // firstMatch stays null → matches stays false
+            }
+            else {
+                regex.lastIndex = 0;
+                firstMatch = regex.exec(line);
+            }
+            const matches = firstMatch !== null;
             if (matches !== invertMatch) {
                 hasMatch = true;
                 matchCount++;
                 if (onlyMatching) {
-                    regex.lastIndex = 0;
-                    for (let match = regex.exec(line); match !== null; match = regex.exec(line)) {
+                    // firstMatch is the first iteration of the all-matches loop.
+                    // exec()'s side effect already advanced lastIndex past it.
+                    for (let match = firstMatch; match !== null; match = regex.exec(line)) {
                         // If \K was used, extract from the capture group instead of full match
                         const rawMatch = kResetGroup !== undefined ? (match[kResetGroup] ?? "") : match[0];
                         const matchText = replace !== null ? applyReplacement(replace, match) : rawMatch;
@@ -118,8 +153,7 @@ export function searchContent(content, regex, options = {}) {
                 }
                 else if (vimgrep) {
                     // Vimgrep mode: output each match separately with full line
-                    regex.lastIndex = 0;
-                    for (let match = regex.exec(line); match !== null; match = regex.exec(line)) {
+                    for (let match = firstMatch; match !== null; match = regex.exec(line)) {
                         let prefix = filename ? `${filename}:` : "";
                         if (showByteOffset)
                             prefix += `${byteOffset + match.index}:`;
@@ -133,9 +167,7 @@ export function searchContent(content, regex, options = {}) {
                     }
                 }
                 else {
-                    // Get first match position for column
-                    regex.lastIndex = 0;
-                    const firstMatch = regex.exec(line);
+                    // First match position already known from the exec() above.
                     const column = firstMatch ? firstMatch.index + 1 : 1;
                     // Apply replacement if specified
                     let outputLine = line;
@@ -192,8 +224,14 @@ export function searchContent(content, regex, options = {}) {
         let matchCount = 0;
         for (let i = 0; i < lastIdx; i++) {
             const line = lines[i];
-            regex.lastIndex = 0;
-            const matches = regex.test(line);
+            let matches;
+            if (preFilter && !preFilterMatches(preFilter, line)) {
+                matches = false;
+            }
+            else {
+                regex.lastIndex = 0;
+                matches = regex.test(line);
+            }
             const isMatch = matches !== invertMatch;
             if (isMatch) {
                 hasMatch = true;
@@ -223,8 +261,16 @@ export function searchContent(content, regex, options = {}) {
         // Check if we've reached maxCount
         if (maxCount > 0 && matchCount >= maxCount)
             break;
-        regex.lastIndex = 0;
-        if (regex.test(lines[i]) !== invertMatch) {
+        const line = lines[i];
+        let matches;
+        if (preFilter && !preFilterMatches(preFilter, line)) {
+            matches = false;
+        }
+        else {
+            regex.lastIndex = 0;
+            matches = regex.test(line);
+        }
+        if (matches !== invertMatch) {
             matchingLineNumbers.push(i);
             matchCount++;
         }

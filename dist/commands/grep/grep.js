@@ -1,3 +1,4 @@
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { matchGlob } from "../../utils/glob.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 import { buildRegex, searchContent } from "../search-engine/index.js";
@@ -191,6 +192,7 @@ export const grepCommand = {
                     : "basic";
         let regex;
         let kResetGroup;
+        let preFilter;
         try {
             const regexResult = buildRegex(pattern, {
                 mode: regexMode,
@@ -200,6 +202,7 @@ export const grepCommand = {
             });
             regex = regexResult.regex;
             kResetGroup = regexResult.kResetGroup;
+            preFilter = regexResult.preFilter;
         }
         catch {
             return {
@@ -208,9 +211,11 @@ export const grepCommand = {
                 exitCode: 2,
             };
         }
-        // If no files and stdin is provided (including empty string), read from stdin
+        // If no files and stdin is provided (including empty string), read from
+        // stdin. grep runs regex over text — decode bytes to UTF-8 so multibyte
+        // codepoints match `.` / character classes correctly.
         if (files.length === 0 && ctx.stdin !== undefined) {
-            const result = searchContent(ctx.stdin, regex, {
+            const result = searchContent(decodeBytesToUtf8(ctx.stdin), regex, {
                 invertMatch,
                 showLineNumbers,
                 countOnly,
@@ -220,10 +225,12 @@ export const grepCommand = {
                 afterContext,
                 maxCount,
                 kResetGroup,
+                preFilter,
             });
             if (quietMode) {
                 return { stdout: "", stderr: "", exitCode: result.matched ? 0 : 1 };
             }
+            // grep emits text; the pipeline handles encoding.
             return {
                 stdout: result.output,
                 stderr: "",
@@ -316,6 +323,7 @@ export const grepCommand = {
                         afterContext,
                         maxCount,
                         kResetGroup,
+                        preFilter,
                     });
                     return { file, result };
                 }

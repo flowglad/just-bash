@@ -6,6 +6,7 @@
  * Wrap input lines in each FILE, writing to standard output.
  * If no FILE is specified, standard input is read.
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 const foldHelp = {
     name: "fold",
@@ -222,8 +223,9 @@ export const fold = {
         }
         let output = "";
         if (files.length === 0) {
-            // Read from stdin
-            const input = ctx.stdin ?? "";
+            // Read from stdin. fold counts width in codepoints (and tab-stops),
+            // so decode bytes — wrapping mid-multibyte would corrupt the data.
+            const input = decodeBytesToUtf8(ctx.stdin) ?? "";
             output = processContent(input, options);
         }
         else {
@@ -241,6 +243,7 @@ export const fold = {
                 output += processContent(content, options);
             }
         }
+        // fold emits text; the pipeline handles encoding.
         return {
             exitCode: 0,
             stdout: output,

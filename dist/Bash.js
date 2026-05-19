@@ -11,6 +11,7 @@
 import "./timers.js";
 import { createJavaScriptCommands, createLazyCommands, createNetworkCommands, createPythonCommands, } from "./commands/registry.js";
 import { createLazyCustomCommand, isLazyCommand, } from "./custom-commands.js";
+import { encodeUtf8ToBytes, latin1FromBytes } from "./encoding.js";
 import { InMemoryFs } from "./fs/in-memory-fs/in-memory-fs.js";
 import { initFilesystem } from "./fs/init.js";
 import { sanitizeErrorMessage } from "./fs/sanitize-error.js";
@@ -36,6 +37,7 @@ export class Bash {
     defenseInDepthConfig;
     coverageWriter;
     jsBootstrapCode;
+    invokeToolFn;
     // biome-ignore lint/suspicious/noExplicitAny: type-erased plugin storage for untyped API
     transformPlugins = [];
     // Interpreter state (shared with interpreter instances)
@@ -192,17 +194,20 @@ export class Bash {
                 this.registerCommand(cmd);
             }
         }
-        // Register javascript commands only when explicitly enabled
-        if (options.javascript) {
+        const jsConfig = typeof options.javascript === "object"
+            ? options.javascript
+            : Object.create(null);
+        // Register javascript commands when JS is enabled or an invokeTool hook
+        // is provided (the hook is meaningless without js-exec).
+        if (options.javascript || jsConfig.invokeTool) {
             for (const cmd of createJavaScriptCommands()) {
                 this.registerCommand(cmd);
             }
-            // Store bootstrap code in private field (threaded via context chain, not env)
-            const jsConfig = typeof options.javascript === "object"
-                ? options.javascript
-                : Object.create(null);
             if (jsConfig.bootstrap) {
                 this.jsBootstrapCode = jsConfig.bootstrap;
+            }
+            if (jsConfig.invokeTool) {
+                this.invokeToolFn = jsConfig.invokeTool;
             }
         }
         // Register custom commands (after built-ins so they can override)
@@ -341,8 +346,14 @@ export class Bash {
             options: { ...this.state.options },
             // Share hashTable reference - it should persist across exec calls
             hashTable: this.state.hashTable,
-            // Pass stdin through to commands (for bash -c with piped input)
-            groupStdin: options?.stdin,
+            // Pass stdin through to commands (for bash -c with piped input).
+            // The pipeline contract is "stdin is a latin1-shaped byte buffer";
+            // text-shaped user input (the default) needs UTF-8 encoding here
+            // so byte consumers (`wc -c`, `base64`) inside the script see real
+            // UTF-8 bytes. Callers that already prepared a byte buffer (e.g.
+            // `Buffer.from(buf).toString("latin1")`) opt into raw passthrough
+            // via `stdinKind: "bytes"`.
+            groupStdin: encodeStdinForPipeline(options?.stdin, options?.stdinKind),
             // Cooperative cancellation signal (used by timeout command)
             signal: options?.signal,
             // Extra arguments injected directly into first command's arg list
@@ -393,6 +404,7 @@ export class Bash {
                     coverage: this.coverageWriter,
                     requireDefenseContext: defenseBox?.isEnabled() === true,
                     jsBootstrapCode: this.jsBootstrapCode,
+                    invokeTool: this.invokeToolFn,
                 };
                 const interpreter = new Interpreter(interpreterOptions, execState);
                 const result = await interpreter.executeScript(ast);
@@ -637,4 +649,16 @@ function decodeBinaryToUtf8(s) {
     catch {
         return s;
     }
+}
+/**
+ * Convert user-supplied stdin into the latin1 byte buffer the pipeline
+ * expects. `"text"` (the default) is JS Unicode and gets UTF-8 encoded;
+ * `"bytes"` is already byte-shaped and passes through verbatim.
+ */
+function encodeStdinForPipeline(stdin, kind) {
+    if (stdin === undefined)
+        return undefined;
+    if (kind === "bytes")
+        return stdin;
+    return latin1FromBytes(encodeUtf8ToBytes(stdin));
 }

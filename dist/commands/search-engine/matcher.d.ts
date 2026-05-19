@@ -2,6 +2,7 @@
  * Core content matching logic for search commands
  */
 import type { UserRegex } from "../../regex/index.js";
+import type { PreFilter } from "./regex.js";
 export interface SearchOptions {
     /** Select non-matching lines */
     invertMatch?: boolean;
@@ -37,6 +38,11 @@ export interface SearchOptions {
     multiline?: boolean;
     /** If \K was used, this is the capture group index containing the "real" match */
     kResetGroup?: number;
+    /**
+     * Optional substring fast-path: skip RE2 entirely for lines where no needle
+     * is present. Pre-computed by buildRegex from the source pattern.
+     */
+    preFilter?: PreFilter | null;
 }
 export interface SearchResult {
     /** The formatted output string */

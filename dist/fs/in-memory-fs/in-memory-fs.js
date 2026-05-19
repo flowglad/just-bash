@@ -1,3 +1,4 @@
+import { unsafeBytesFromLatin1 } from "../../encoding.js";
 import { fromBuffer, getEncoding, toBuffer } from "../encoding.js";
 import { DEFAULT_DIR_MODE, DEFAULT_FILE_MODE, dirname, joinPath, MAX_SYMLINK_DEPTH, normalizePath, resolvePath, resolveSymlinkTarget, SYMLINK_MODE, validatePath, } from "../path-utils.js";
 // Text encoder for legacy string content conversion
@@ -104,6 +105,10 @@ export class InMemoryFs {
         const buffer = await this.readFileBuffer(path);
         const encoding = getEncoding(options);
         return fromBuffer(buffer, encoding);
+    }
+    async readFileBytes(path) {
+        const buffer = await this.readFileBuffer(path);
+        return unsafeBytesFromLatin1(fromBuffer(buffer, "binary"));
     }
     async readFileBuffer(path) {
         validatePath(path, "open");

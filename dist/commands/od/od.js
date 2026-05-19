@@ -6,6 +6,7 @@
  * Write an unambiguous representation, octal bytes by default,
  * of FILE to standard output.
  */
+import { latin1FromBytes, readBytesFrom } from "../../encoding.js";
 async function odExecute(args, ctx) {
     // Parse options
     let addressMode = "octal";
@@ -41,15 +42,16 @@ async function odExecute(args, ctx) {
     if (outputFormats.length === 0) {
         outputFormats.push("octal");
     }
-    // Get input - from file or stdin
-    let input = ctx.stdin;
+    // Get input - from file or stdin. od is byte-oriented: dump the raw byte
+    // buffer character-by-character, where each char is one byte.
+    let input = latin1FromBytes(ctx.stdin);
     // Check for file argument
     if (fileArgs.length > 0 && fileArgs[0] !== "-") {
         const filePath = fileArgs[0].startsWith("/")
             ? fileArgs[0]
             : `${ctx.cwd}/${fileArgs[0]}`;
         try {
-            input = await ctx.fs.readFile(filePath);
+            input = latin1FromBytes(await readBytesFrom(ctx.fs, filePath));
         }
         catch {
             return {

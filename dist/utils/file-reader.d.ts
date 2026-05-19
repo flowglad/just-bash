@@ -4,6 +4,7 @@
  * Provides common patterns for reading from files or stdin,
  * including parallel batch reading for performance.
  */
+import { type ByteString } from "../encoding.js";
 import type { CommandContext, ExecResult } from "../types.js";
 export interface ReadFilesOptions {
     /** Command name for error messages */
@@ -18,8 +19,12 @@ export interface ReadFilesOptions {
 export interface FileContent {
     /** File name (or "-" for stdin, or "" if stdin with no files) */
     filename: string;
-    /** File content */
-    content: string;
+    /**
+     * File content as a byte buffer (latin1-shaped). Decode with
+     * `decodeBytesToUtf8` before regex/parsing/char-position math; pass through
+     * `latin1FromBytes` if forwarding bytes unchanged.
+     */
+    content: ByteString;
 }
 export interface ReadFilesResult {
     /** Successfully read files */
@@ -46,21 +51,23 @@ export interface ReadFilesResult {
  */
 export declare function readFiles(ctx: CommandContext, files: string[], options: ReadFilesOptions): Promise<ReadFilesResult>;
 /**
- * Read and concatenate all files into a single string.
+ * Read and concatenate all files into a single byte buffer.
  *
  * Useful for commands like sort and uniq that process all input together.
+ * Callers must `decodeBytesToUtf8` (text processing) or `latin1FromBytes`
+ * (byte passthrough) before using the content.
  *
  * @example
  * const result = await readAndConcat(ctx, files, { cmdName: "sort" });
  * if (!result.ok) return result.error;
- * const lines = result.content.split("\n");
+ * const lines = decodeBytesToUtf8(result.content).split("\n");
  */
 export declare function readAndConcat(ctx: CommandContext, files: string[], options: {
     cmdName: string;
     allowStdinMarker?: boolean;
 }): Promise<{
     ok: true;
-    content: string;
+    content: ByteString;
 } | {
     ok: false;
     error: ExecResult;

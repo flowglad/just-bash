@@ -1531,7 +1531,9 @@ var OpCode = {
   // HTTP operations
   HTTP_REQUEST: 200,
   // Sub-shell execution
-  EXEC_COMMAND: 300
+  EXEC_COMMAND: 300,
+  // Tool invocation (executor mode)
+  INVOKE_TOOL: 400
 };
 var Status = {
   PENDING: 0,
@@ -1568,12 +1570,12 @@ var Offset = {
 var Size = {
   CONTROL_REGION: 32,
   PATH_BUFFER: 4096,
-  // 1MB limit applies to all FS read/write operations through the bridge.
-  // Files larger than this will be truncated. This is tight — consider
-  // increasing if real workloads hit the cap. Reduced from 16MB for faster tests.
-  DATA_BUFFER: 1048576,
-  TOTAL: 1052704
-  // 32 + 4096 + 1MB
+  // 8MB limit for FS read/write, HTTP responses, and tool invocation results.
+  // Sized to handle typical OpenAPI/GraphQL responses (paginated lists, batch queries).
+  // Still well under the 64MB QuickJS memory limit per execution.
+  DATA_BUFFER: 8388608,
+  TOTAL: 8392736
+  // 32 + 4096 + 8MB
 };
 var Flags = {
   NONE: 0,
@@ -2013,6 +2015,18 @@ var SyncBackend = class {
     }
     const responseJson = new TextDecoder().decode(result.result);
     return JSON.parse(responseJson);
+  }
+  /**
+   * Invoke a tool through the main thread's invokeTool hook.
+   * Returns the JSON-serialized result.
+   */
+  invokeTool(path, argsJson) {
+    const requestData = argsJson ? new TextEncoder().encode(argsJson) : void 0;
+    const result = this.execSync(OpCode.INVOKE_TOOL, path, requestData);
+    if (!result.success) {
+      throw new Error(result.error || "Tool invocation failed");
+    }
+    return new TextDecoder().decode(result.result);
   }
 };
 
@@ -3824,6 +3838,26 @@ function setupContext(context, backend, input) {
   );
   context.setProp(context.global, "__execArgs", execArgsFn);
   execArgsFn.dispose();
+  if (input.hasInvokeTool) {
+    const invokeToolFn = context.newFunction(
+      "__invokeTool",
+      (pathHandle, argsHandle) => {
+        const path = context.getString(pathHandle);
+        const argsJson = context.getString(argsHandle);
+        try {
+          const resultJson = backend.invokeTool(path, argsJson);
+          return context.newString(resultJson);
+        } catch (e) {
+          return throwError(
+            context,
+            e.message || "tool invocation failed"
+          );
+        }
+      }
+    );
+    context.setProp(context.global, "__invokeTool", invokeToolFn);
+    invokeToolFn.dispose();
+  }
   const envObj = jsToHandle(context, input.env);
   context.setProp(context.global, "env", envObj);
   envObj.dispose();
@@ -4081,6 +4115,24 @@ async function initializeWithDefense() {
     ]
   });
 }
+var TOOLS_PROXY_SETUP_SOURCE = `(function() {
+  globalThis.tools = (function makeProxy(path) {
+    return new Proxy(function(){}, {
+      get: function(_t, prop) {
+        if (prop === 'then' || typeof prop === 'symbol') return undefined;
+        return makeProxy(path.concat([String(prop)]));
+      },
+      apply: function(_t, _this, args) {
+        var toolPath = path.join('.');
+        if (!toolPath) throw new Error('Tool path missing in invocation');
+        var argsJson = args.length > 0 ? JSON.stringify(args[0]) : '';
+        if (argsJson === undefined) argsJson = '';
+        var resultJson = globalThis.__invokeTool(toolPath, argsJson);
+        return resultJson !== undefined && resultJson !== '' ? JSON.parse(resultJson) : undefined;
+      }
+    });
+  })([]);
+})();`;
 async function executeCode(input) {
   const qjs = await getQuickJSModule();
   const backend = new SyncBackend(input.sharedBuffer, input.timeoutMs);
@@ -4287,6 +4339,17 @@ async function executeCode(input) {
         return { success: true };
       }
       bootstrapResult.value.dispose();
+    }
+    if (input.hasInvokeTool) {
+      const toolsSetupResult = context.evalCode(
+        TOOLS_PROXY_SETUP_SOURCE,
+        "<tools-setup>"
+      );
+      if (toolsSetupResult.error) {
+        toolsSetupResult.error.dispose();
+      } else {
+        toolsSetupResult.value.dispose();
+      }
     }
     const filename = input.scriptPath || "<eval>";
     let jsCode = input.jsCode;

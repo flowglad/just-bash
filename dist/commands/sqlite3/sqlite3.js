@@ -16,6 +16,7 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import initSqlJs from "sql.js";
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { sanitizeErrorMessage, sanitizeHostErrorMessage, } from "../../fs/sanitize-error.js";
 import { bindDefenseContextCallback } from "../../security/defense-context.js";
 import { DefenseInDepthBox } from "../../security/defense-in-depth-box.js";
@@ -454,9 +455,11 @@ export const sqlite3Command = {
                 exitCode: 1,
             };
         }
-        // Get SQL from argument or stdin. Prepend -cmd first, then -init on top,
-        // so the final execution order is: init content -> cmd -> main SQL.
-        let sql = sqlArg || ctx.stdin.trim();
+        // Get SQL from argument or stdin. SQL is text — decode bytes to UTF-8 so
+        // string literals containing multibyte characters survive intact.
+        // Prepend -cmd first, then -init on top, so the final execution order is:
+        // init content -> cmd -> main SQL.
+        let sql = sqlArg || decodeBytesToUtf8(ctx.stdin).trim();
         if (options.cmd) {
             sql = options.cmd + (sql ? `; ${sql}` : "");
         }
@@ -484,7 +487,10 @@ export const sqlite3Command = {
         // exit 0, matching real sqlite3. sqlArg/options.init are typed as
         // `string | null`, so test for absence with `=== null` rather than
         // falsiness (an explicit empty string is "provided but empty").
-        if (!sql && options.init === null && sqlArg === null && !ctx.stdin.trim()) {
+        if (!sql &&
+            options.init === null &&
+            sqlArg === null &&
+            !decodeBytesToUtf8(ctx.stdin).trim()) {
             return {
                 stdout: "",
                 stderr: "sqlite3: no SQL provided\n",
@@ -637,13 +643,14 @@ export const sqlite3Command = {
         // Without -bail, dot-command errors are emitted in stdout alongside SQL
         // results (matches inline SQL error routing — preprocessing stops at the
         // first bad dot-command, so SQL accumulated up to that point precedes
-        // the error in script order).
+        // the error in script order). sqlite3 emits text; the pipeline handles
+        // encoding.
         if (dotError) {
             stdout += `${dotError}\n`;
         }
-        // dotError always causes exit 1 (matches real sqlite3).
-        // hadError without -bail doesn't (pre-existing behaviour preserved);
-        // hadError with -bail already returned early in the loop above.
+        // dotError always causes exit 1 (matches real sqlite3). SQL errors with
+        // -bail already returned early in the loop above; without -bail, SQL
+        // errors are routed in-band and exit 0 (pre-existing behaviour preserved).
         const exitCode = dotError !== undefined ? 1 : 0;
         return { stdout, stderr: "", exitCode };
     },

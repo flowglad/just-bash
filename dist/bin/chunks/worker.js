@@ -1570,7 +1570,9 @@ var OpCode = {
   // HTTP operations
   HTTP_REQUEST: 200,
   // Sub-shell execution
-  EXEC_COMMAND: 300
+  EXEC_COMMAND: 300,
+  // Tool invocation (executor mode)
+  INVOKE_TOOL: 400
 };
 var Status = {
   PENDING: 0,
@@ -1607,12 +1609,12 @@ var Offset = {
 var Size = {
   CONTROL_REGION: 32,
   PATH_BUFFER: 4096,
-  // 1MB limit applies to all FS read/write operations through the bridge.
-  // Files larger than this will be truncated. This is tight — consider
-  // increasing if real workloads hit the cap. Reduced from 16MB for faster tests.
-  DATA_BUFFER: 1048576,
-  TOTAL: 1052704
-  // 32 + 4096 + 1MB
+  // 8MB limit for FS read/write, HTTP responses, and tool invocation results.
+  // Sized to handle typical OpenAPI/GraphQL responses (paginated lists, batch queries).
+  // Still well under the 64MB QuickJS memory limit per execution.
+  DATA_BUFFER: 8388608,
+  TOTAL: 8392736
+  // 32 + 4096 + 8MB
 };
 var Flags = {
   NONE: 0,
@@ -2052,6 +2054,18 @@ var SyncBackend = class {
     }
     const responseJson = new TextDecoder().decode(result.result);
     return JSON.parse(responseJson);
+  }
+  /**
+   * Invoke a tool through the main thread's invokeTool hook.
+   * Returns the JSON-serialized result.
+   */
+  invokeTool(path, argsJson) {
+    const requestData = argsJson ? new TextEncoder().encode(argsJson) : void 0;
+    const result = this.execSync(OpCode.INVOKE_TOOL, path, requestData);
+    if (!result.success) {
+      throw new Error(result.error || "Tool invocation failed");
+    }
+    return new TextDecoder().decode(result.result);
   }
 };
 

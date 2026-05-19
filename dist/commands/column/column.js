@@ -5,6 +5,7 @@
  *
  * Columnate input. Fill rows first by default, or create a table with -t.
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { parseArgs } from "../../utils/args.js";
 import { hasHelpFlag, showHelp } from "../help.js";
 const columnHelp = {
@@ -140,16 +141,19 @@ export const column = {
         const files = parsed.result.positional;
         // Default output separator is two spaces
         const outSep = outputSep ?? "  ";
-        // Read input
+        // Read input. column uses .length / .padEnd for column widths, which
+        // operate on codepoints — decode bytes to UTF-8 so accented / CJK chars
+        // count once. (Display-width math for double-wide CJK is still wrong;
+        // see follow-up.)
         let content;
         if (files.length === 0) {
-            content = ctx.stdin ?? "";
+            content = decodeBytesToUtf8(ctx.stdin) ?? "";
         }
         else {
             const parts = [];
             for (const file of files) {
                 if (file === "-") {
-                    parts.push(ctx.stdin ?? "");
+                    parts.push(decodeBytesToUtf8(ctx.stdin) ?? "");
                 }
                 else {
                     const filePath = ctx.fs.resolvePath(ctx.cwd, file);
@@ -201,6 +205,7 @@ export const column = {
         if (output.length > 0) {
             output += "\n";
         }
+        // column emits text; the pipeline handles encoding.
         return {
             exitCode: 0,
             stdout: output,

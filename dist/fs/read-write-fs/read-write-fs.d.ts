@@ -10,6 +10,7 @@
  * are allowed, targets are validated and transformed to stay within root.
  * New methods must use these gates — never access the real FS directly.
  */
+import { type ByteString } from "../../encoding.js";
 import { type FileContent } from "../encoding.js";
 import type { CpOptions, DirentEntry, FsStat, IFileSystem, MkdirOptions, ReadFileOptions, RmOptions, WriteFileOptions } from "../interface.js";
 export interface ReadWriteFsOptions {
@@ -56,6 +57,7 @@ export declare class ReadWriteFs implements IFileSystem {
      */
     private toRealPath;
     readFile(path: string, options?: ReadFileOptions | BufferEncoding): Promise<string>;
+    readFileBytes(path: string): Promise<ByteString>;
     readFileBuffer(path: string): Promise<Uint8Array>;
     writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;
     appendFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;

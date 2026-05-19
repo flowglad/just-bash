@@ -1,6 +1,7 @@
 /**
  * Shared utilities for head and tail commands.
  */
+import { latin1FromBytes } from "../../encoding.js";
 import { unknownOption } from "../help.js";
 /**
  * Parse head/tail command arguments.
@@ -97,10 +98,11 @@ export function parseHeadTailArgs(args, cmdName) {
  */
 export async function processHeadTailFiles(ctx, options, cmdName, contentProcessor) {
     const { quiet, verbose, files } = options;
-    // If no files, read from stdin
+    // If no files, read from stdin. head/tail are line-oriented and byte-clean
+    // — \n splits are byte-safe regardless of UTF-8 multibyte content.
     if (files.length === 0) {
         return {
-            stdout: contentProcessor(ctx.stdin),
+            stdout: contentProcessor(latin1FromBytes(ctx.stdin)),
             stderr: "",
             exitCode: 0,
         };

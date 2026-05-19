@@ -4,6 +4,7 @@
  * Also provides gunzip (decompress) and zcat (decompress to stdout) commands.
  */
 import { constants, gunzipSync, gzipSync } from "node:zlib";
+import { latin1FromBytes } from "../../encoding.js";
 import { parseArgs } from "../../utils/args.js";
 import { hasHelpFlag, showHelp } from "../help.js";
 const gzipHelp = {
@@ -224,7 +225,7 @@ async function processFile(ctx, file, flags, cmdName, decompress, toStdout) {
     const maxDecompressedSize = getMaxDecompressedSize(ctx);
     // Handle stdin
     if (file === "-" || file === "") {
-        inputData = Uint8Array.from(ctx.stdin, (c) => c.charCodeAt(0));
+        inputData = Uint8Array.from(latin1FromBytes(ctx.stdin), (c) => c.charCodeAt(0));
         if (decompress) {
             if (!isGzip(inputData)) {
                 if (!flags.quiet) {
@@ -497,7 +498,7 @@ async function processDirectory(ctx, dirPath, flags, cmdName, decompress, toStdo
 async function listFile(ctx, file, flags, cmdName) {
     let inputData;
     if (file === "-" || file === "") {
-        inputData = Uint8Array.from(ctx.stdin, (c) => c.charCodeAt(0));
+        inputData = Uint8Array.from(latin1FromBytes(ctx.stdin), (c) => c.charCodeAt(0));
     }
     else {
         const inputPath = ctx.fs.resolvePath(ctx.cwd, file);
@@ -536,7 +537,7 @@ async function listFile(ctx, file, flags, cmdName) {
 async function testFile(ctx, file, flags, cmdName) {
     let inputData;
     if (file === "-" || file === "") {
-        inputData = Uint8Array.from(ctx.stdin, (c) => c.charCodeAt(0));
+        inputData = Uint8Array.from(latin1FromBytes(ctx.stdin), (c) => c.charCodeAt(0));
     }
     else {
         const inputPath = ctx.fs.resolvePath(ctx.cwd, file);

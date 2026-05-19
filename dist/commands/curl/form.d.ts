@@ -4,7 +4,7 @@
 import type { FormField } from "./types.js";
 /**
  * URL-encode form data in curl's --data-urlencode format
- * Supports: name=content, =content, name@file, @file
+ * Supports: name=content, =content, content. File forms are rejected by parseOptions.
  */
 export declare function encodeFormData(input: string): string;
 /**

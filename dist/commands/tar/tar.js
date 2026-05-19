@@ -4,6 +4,7 @@
  * Supports creating, extracting, and listing tar archives
  * with optional gzip, bzip2, and xz compression.
  */
+import { latin1FromBytes } from "../../encoding.js";
 import { createUserRegex } from "../../regex/index.js";
 import { formatMode } from "../format-mode.js";
 import { hasHelpFlag, showHelp } from "../help.js";
@@ -307,7 +308,16 @@ async function createTarArchive(ctx, options, files) {
     if (allErrors.length > 0) {
         stderr += `${allErrors.join("\n")}\n`;
     }
-    return { stdout, stderr, exitCode: allErrors.length > 0 ? 2 : 0 };
+    // Mark stdout as bytes when emitting an archive (`tar -c -f -`); the
+    // pipeline + redirect layer will preserve the bytes verbatim instead of
+    // UTF-8 encoding them. `-f /path` paths emit empty stdout — the kind
+    // doesn't matter there.
+    return {
+        stdout,
+        stderr,
+        exitCode: allErrors.length > 0 ? 2 : 0,
+        stdoutKind: stdout.length > 0 ? "bytes" : "text",
+    };
 }
 /**
  * Append files to an existing tar archive (-r)
@@ -555,7 +565,7 @@ async function extractTarArchive(ctx, options, specificFiles) {
     }
     else {
         // Read from stdin - convert binary string directly to bytes without UTF-8 re-encoding
-        archiveData = Uint8Array.from(ctx.stdin, (c) => c.charCodeAt(0));
+        archiveData = Uint8Array.from(latin1FromBytes(ctx.stdin), (c) => c.charCodeAt(0));
     }
     // Parse archive - auto-detect compression or use flags
     let parseResult;
@@ -776,7 +786,7 @@ async function listTarArchive(ctx, options, specificFiles) {
     }
     else {
         // Read from stdin - convert binary string directly to bytes without UTF-8 re-encoding
-        archiveData = Uint8Array.from(ctx.stdin, (c) => c.charCodeAt(0));
+        archiveData = Uint8Array.from(latin1FromBytes(ctx.stdin), (c) => c.charCodeAt(0));
     }
     // Parse archive - auto-detect compression or use flags
     let parseResult;

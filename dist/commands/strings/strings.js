@@ -6,6 +6,7 @@
  * For each FILE, print the printable character sequences that are at least
  * MIN characters long. If no FILE is specified, standard input is read.
  */
+import { latin1FromBytes } from "../../encoding.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 const stringsHelp = {
     name: "strings",
@@ -204,23 +205,29 @@ export const strings = {
             }
         }
         let output = "";
+        // strings extracts ASCII-printable runs from a binary buffer — the
+        // input must reach the byte loop as raw bytes, not as decoded text.
+        // Pass latin1-shaped bytes directly so multibyte UTF-8 sequences in the
+        // source aren't re-encoded by TextEncoder.
+        const stdinBytes = () => Uint8Array.from(latin1FromBytes(ctx.stdin) ?? "", (c) => c.charCodeAt(0));
         if (files.length === 0) {
             // Read from stdin
-            const input = ctx.stdin ?? "";
-            const strings = extractStrings(input, options);
+            const strings = extractStrings(stdinBytes(), options);
             output = strings.length > 0 ? `${strings.join("\n")}\n` : "";
         }
         else {
             // Process each file
             for (const file of files) {
-                let content;
+                let buffer;
                 if (file === "-") {
-                    content = ctx.stdin ?? "";
+                    buffer = stdinBytes();
                 }
                 else {
                     const filePath = ctx.fs.resolvePath(ctx.cwd, file);
-                    content = await ctx.fs.readFile(filePath);
-                    if (content === null) {
+                    try {
+                        buffer = await ctx.fs.readFileBuffer(filePath);
+                    }
+                    catch {
                         return {
                             exitCode: 1,
                             stdout: output,
@@ -228,7 +235,7 @@ export const strings = {
                         };
                     }
                 }
-                const strings = extractStrings(content, options);
+                const strings = extractStrings(buffer, options);
                 if (strings.length > 0) {
                     output += `${strings.join("\n")}\n`;
                 }

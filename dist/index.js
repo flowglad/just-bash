@@ -1,6 +1,7 @@
 export { Bash } from "./Bash.js";
 export { getCommandNames, getJavaScriptCommandNames, getNetworkCommandNames, getPythonCommandNames, } from "./commands/registry.js";
 export { defineCommand } from "./custom-commands.js";
+export { bytesOutput, decodeBytesToUtf8, EMPTY_BYTES, encodeUtf8ToBytes, latin1FromBytes, stdoutAsBytes, stdoutKind, textOutput, unsafeBytesFromLatin1, } from "./encoding.js";
 export { InMemoryFs } from "./fs/in-memory-fs/index.js";
 export { MountableFs, } from "./fs/mountable-fs/index.js";
 export { OverlayFs } from "./fs/overlay-fs/index.js";

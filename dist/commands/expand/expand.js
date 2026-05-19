@@ -6,6 +6,7 @@
  * Convert TABs in each FILE to spaces, writing to standard output.
  * If no FILE is specified, standard input is read.
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 const expandHelp = {
     name: "expand",
@@ -192,7 +193,9 @@ export const expand = {
         }
         let output = "";
         if (files.length === 0) {
-            const input = ctx.stdin ?? "";
+            // expand counts column positions for tab-stop math; decode bytes so a
+            // multibyte char counts as one column rather than 2–4.
+            const input = decodeBytesToUtf8(ctx.stdin) ?? "";
             output = processContent(input, options);
         }
         else {
@@ -209,6 +212,7 @@ export const expand = {
                 output += processContent(content, options);
             }
         }
+        // expand emits text; the pipeline handles encoding.
         return {
             exitCode: 0,
             stdout: output,

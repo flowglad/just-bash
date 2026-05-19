@@ -2,6 +2,7 @@
  * CSV parsing and formatting utilities for xan command
  */
 import Papa from "papaparse";
+import { decodeBytesToUtf8 } from "../../encoding.js";
 /**
  * Create a null-prototype CsvRow to prevent prototype pollution.
  * User-controlled CSV column names could match dangerous keys like
@@ -61,8 +62,9 @@ export function formatCsv(headers, data) {
 export async function readCsvInput(args, ctx) {
     const file = args.find((a) => !a.startsWith("-"));
     let input;
+    // CSV is text; decode bytes so multibyte fields aren't split mid-codepoint.
     if (!file || file === "-") {
-        input = ctx.stdin;
+        input = decodeBytesToUtf8(ctx.stdin);
     }
     else {
         try {

@@ -5,6 +5,8 @@ export type { AllCommandName, CommandName, JavaScriptCommandName, NetworkCommand
 export { getCommandNames, getJavaScriptCommandNames, getNetworkCommandNames, getPythonCommandNames, } from "./commands/registry.js";
 export type { CustomCommand, LazyCommand } from "./custom-commands.js";
 export { defineCommand } from "./custom-commands.js";
+export type { ByteString, OutputKind } from "./encoding.js";
+export { bytesOutput, decodeBytesToUtf8, EMPTY_BYTES, encodeUtf8ToBytes, latin1FromBytes, stdoutAsBytes, stdoutKind, textOutput, unsafeBytesFromLatin1, } from "./encoding.js";
 export { InMemoryFs } from "./fs/in-memory-fs/index.js";
 export type { BufferEncoding, CpOptions, DirectoryEntry, FileContent, FileEntry, FileInit, FileSystemFactory, FsEntry, FsStat, InitialFiles, LazyFileEntry, LazyFileProvider, MkdirOptions, RmOptions, SymlinkEntry, } from "./fs/interface.js";
 export { MountableFs, type MountableFsOptions, type MountConfig, } from "./fs/mountable-fs/index.js";
