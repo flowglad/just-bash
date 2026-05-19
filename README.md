@@ -12,7 +12,7 @@
 >
 > | Patch | What it fixes | Upstream PR |
 > | --- | --- | --- |
-> | `sqlite3-worker` | The published npm tarball omits `dist/commands/sqlite3/worker.js`, so the bundled `sqlite3` command falls through to the Python worker and throws on every invocation. We ship the worker. | _filed in Patch 2_ |
+> | `sqlite3-dot-commands` | sql.js doesn't implement sqlite3's CLI dot-commands (`.tables`, `.schema`, `.mode`, `.read`, `.separator`, `.quit`, etc.), so agent scripts pasted from real `sqlite3` sessions hit syntax errors. We carry a preprocessor (`commands/sqlite3/dot-commands.ts`) that translates each dot-command to equivalent SQL, formatter-state mutations, recursive `.read` inlining, or actionable in-band error messages before handing the script to the worker. (The original `sqlite3-worker` bundling bug was upstreamed in [vercel-labs#190](https://github.com/vercel-labs/just-bash/pull/190).) | _filed in Patch 2_ |
 > | `awk-comma-continuation` | The bundled awk lexer emits a `NEWLINE` token after a trailing comma, breaking POSIX comma-continuation in scripts our agent runs. | _filed in Patch 2_ |
 > | `jq-permissive-control-chars` | The bundled jq input scanner calls `JSON.parse` on raw bytes that may contain literal control characters (which Shopify's Admin API responses do), failing parse. We sanitize the slice before parsing. | _filed in Patch 2_ |
 >
