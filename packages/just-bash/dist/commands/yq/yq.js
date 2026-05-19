@@ -7,6 +7,7 @@
  * Inspired by mikefarah/yq (https://github.com/mikefarah/yq)
  * This is a reimplementation for the just-bash sandboxed environment.
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { sanitizeErrorMessage } from "../../fs/sanitize-error.js";
 import { ExecutionLimitError } from "../../interpreter/errors.js";
 import { assertDefenseContext, awaitWithDefenseContext, } from "../../security/defense-context.js";
@@ -263,14 +264,16 @@ export const yqCommand = {
                 exitCode: 1,
             };
         }
-        // Read input
+        // Read input. yq parses YAML/JSON/etc — stdin bytes from a piped command
+        // arrive latin1-shaped, so decode to UTF-8 before handing to the parser.
+        // File reads use default utf8 decoding already.
         let input;
         let filePath;
         if (options.nullInput) {
             input = "";
         }
         else if (files.length === 0 || (files.length === 1 && files[0] === "-")) {
-            input = ctx.stdin;
+            input = decodeBytesToUtf8(ctx.stdin);
         }
         else {
             try {
@@ -350,6 +353,7 @@ export const yqCommand = {
                     values.every((v) => v === null || v === undefined || v === false))
                 ? 1
                 : 0;
+            // yq emits text; the pipeline handles encoding.
             return {
                 stdout: finalOutput,
                 stderr: "",

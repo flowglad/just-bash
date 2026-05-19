@@ -1,3 +1,4 @@
+import { decodeBytesToUtf8, latin1FromBytes } from "../../encoding.js";
 import { readAndConcat } from "../../utils/file-reader.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 const cutHelp = {
@@ -108,11 +109,15 @@ export const cutCommand = {
                 exitCode: 1,
             };
         }
-        // Read from files or stdin
+        // Read from files or stdin. Field mode (-f) is byte-clean: ASCII
+        // delimiters never collide with multibyte UTF-8 leading bytes (≥0x80).
+        // Char mode (-c) needs codepoint awareness, so decode then re-encode.
         const readResult = await readAndConcat(ctx, files, { cmdName: "cut" });
         if (!readResult.ok)
             return readResult.error;
-        const content = readResult.content;
+        const content = charSpec
+            ? decodeBytesToUtf8(readResult.content)
+            : latin1FromBytes(readResult.content);
         // Split into lines
         const lines = content.split("\n");
         if (lines.length > 0 && lines[lines.length - 1] === "") {
@@ -122,8 +127,10 @@ export const cutCommand = {
         let output = "";
         for (const line of lines) {
             if (charSpec) {
-                // Character mode (-s has no effect in character mode)
-                const chars = line.split("");
+                // Character mode (-s has no effect in character mode). Slice by
+                // codepoints — `Array.from` splits on Unicode code points so emoji
+                // and CJK chars count as one position each.
+                const chars = Array.from(line);
                 const selected = [];
                 for (const range of ranges) {
                     const start = range.start - 1;
@@ -147,10 +154,19 @@ export const cutCommand = {
                 output += `${selected.join(delimiter)}\n`;
             }
         }
+        // Char mode produces decoded text; field mode forwards bytes verbatim.
+        if (charSpec) {
+            return {
+                stdout: output,
+                stderr: "",
+                exitCode: 0,
+            };
+        }
         return {
             stdout: output,
             stderr: "",
             exitCode: 0,
+            stdoutKind: "bytes",
             stdoutEncoding: "binary",
         };
     },

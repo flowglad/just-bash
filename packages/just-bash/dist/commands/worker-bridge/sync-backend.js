@@ -217,4 +217,18 @@ export class SyncBackend {
         const responseJson = new TextDecoder().decode(result.result);
         return JSON.parse(responseJson);
     }
+    /**
+     * Invoke a tool through the main thread's invokeTool hook.
+     * Returns the JSON-serialized result.
+     */
+    invokeTool(path, argsJson) {
+        const requestData = argsJson
+            ? new TextEncoder().encode(argsJson)
+            : undefined;
+        const result = this.execSync(OpCode.INVOKE_TOOL, path, requestData);
+        if (!result.success) {
+            throw new Error(result.error || "Tool invocation failed");
+        }
+        return new TextDecoder().decode(result.result);
+    }
 }

@@ -1,3 +1,4 @@
+import { readBytesFrom } from "../../encoding.js";
 import { InMemoryFs } from "../in-memory-fs/in-memory-fs.js";
 import { DEFAULT_DIR_MODE, joinPath, normalizePath, resolvePath, validatePath, } from "../path-utils.js";
 /**
@@ -166,6 +167,12 @@ export class MountableFs {
     async readFile(path, options) {
         const { fs, relativePath } = this.routePath(path);
         return fs.readFile(relativePath, options);
+    }
+    async readFileBytes(path) {
+        const { fs, relativePath } = this.routePath(path);
+        // Mounted filesystem may be a user-supplied IFileSystem that predates
+        // readFileBytes; fall through to readBytesFrom which handles both.
+        return readBytesFrom(fs, relativePath);
     }
     async readFileBuffer(path) {
         const { fs, relativePath } = this.routePath(path);

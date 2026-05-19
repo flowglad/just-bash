@@ -12,6 +12,7 @@
  */
 import * as fs from "node:fs";
 import * as nodePath from "node:path";
+import { unsafeBytesFromLatin1 } from "../../encoding.js";
 import { fromBuffer, getEncoding, toBuffer, } from "../encoding.js";
 import { resolvePath as resolveVPath } from "../path-utils.js";
 import { isPathWithinRoot, normalizePath, resolveCanonicalPath, resolveCanonicalPathNoSymlinks, sanitizeFsError, validatePath, validateRootDirectory, } from "../real-fs-utils.js";
@@ -69,6 +70,10 @@ export class ReadWriteFs {
         const buffer = await this.readFileBuffer(path);
         const encoding = getEncoding(options);
         return fromBuffer(buffer, encoding);
+    }
+    async readFileBytes(path) {
+        const buffer = await this.readFileBuffer(path);
+        return unsafeBytesFromLatin1(fromBuffer(buffer, "binary"));
     }
     async readFileBuffer(path) {
         validatePath(path, "open");

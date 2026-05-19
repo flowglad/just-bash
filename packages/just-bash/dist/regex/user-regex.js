@@ -46,6 +46,34 @@ export class UserRegex {
     _lastIndex = 0;
     // Cache native RegExp for compatibility - created lazily
     _nativeRegex = null;
+    // Reusable RE2 Matcher to avoid per-call allocation in tight grep loops.
+    // Matcher allocation dominates regex.test/exec cost when called once per line
+    // across thousands of lines. We mutate charSequence in-place (not resetMatcherInput,
+    // which is broken in re2js 1.2.1 — see acquireMatcher).
+    _matcher = null;
+    _matcherInput = null;
+    acquireMatcher(input) {
+        if (this._matcher === null) {
+            this._matcher = this._re2.matcher(input);
+            this._matcherInput = input;
+            return this._matcher;
+        }
+        if (this._matcherInput !== input) {
+            // Swap the cached Utf16MatcherInput's charSequence in-place to avoid
+            // allocating a new Matcher per call. RE2JS's resetMatcherInput is not
+            // safe with raw strings (the constructor wraps strings via
+            // MatcherInput.utf16, but resetMatcherInput assigns its argument
+            // directly and then calls .length() as a method, which throws on a
+            // raw string). MatcherInput is not exported, so we mutate the existing
+            // wrapper's charSequence field — Matcher.reset() reads matcherInput.length()
+            // afterwards, so the new length is picked up correctly.
+            // biome-ignore lint/suspicious/noExplicitAny: reaching into re2js internals
+            this._matcher.matcherInput.charSequence = input;
+            this._matcherInput = input;
+        }
+        this._matcher.reset();
+        return this._matcher;
+    }
     constructor(pattern, flags = "") {
         this._pattern = pattern;
         this._flags = flags;
@@ -90,7 +118,7 @@ export class UserRegex {
         if (this._global) {
             this._lastIndex = 0;
         }
-        const matcher = this._re2.matcher(input);
+        const matcher = this.acquireMatcher(input);
         return matcher.find();
     }
     /**
@@ -98,7 +126,7 @@ export class UserRegex {
      * Returns match array with capture groups, or null if no match.
      */
     exec(input) {
-        const matcher = this._re2.matcher(input);
+        const matcher = this.acquireMatcher(input);
         // For global regex, start from lastIndex
         const startPos = this._global ? this._lastIndex : 0;
         if (!matcher.find(startPos)) {

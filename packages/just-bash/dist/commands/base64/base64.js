@@ -1,6 +1,7 @@
 /**
  * base64 - Encode or decode base64
  */
+import { latin1FromBytes } from "../../encoding.js";
 import { parseArgs } from "../../utils/args.js";
 import { hasHelpFlag, showHelp } from "../help.js";
 const base64Help = {
@@ -24,7 +25,7 @@ async function readBinary(ctx, files, cmdName) {
         // Convert binary string directly to bytes without UTF-8 re-encoding
         return {
             ok: true,
-            data: Uint8Array.from(ctx.stdin, (c) => c.charCodeAt(0)),
+            data: Uint8Array.from(latin1FromBytes(ctx.stdin), (c) => c.charCodeAt(0)),
         };
     }
     // Read and concatenate all files as binary
@@ -32,7 +33,7 @@ async function readBinary(ctx, files, cmdName) {
     for (const file of files) {
         if (file === "-") {
             // Convert binary string directly to bytes without UTF-8 re-encoding
-            chunks.push(Uint8Array.from(ctx.stdin, (c) => c.charCodeAt(0)));
+            chunks.push(Uint8Array.from(latin1FromBytes(ctx.stdin), (c) => c.charCodeAt(0)));
             continue;
         }
         try {

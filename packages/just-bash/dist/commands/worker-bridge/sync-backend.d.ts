@@ -78,4 +78,9 @@ export declare class SyncBackend {
         stderr: string;
         exitCode: number;
     };
+    /**
+     * Invoke a tool through the main thread's invokeTool hook.
+     * Returns the JSON-serialized result.
+     */
+    invokeTool(path: string, argsJson: string): string;
 }

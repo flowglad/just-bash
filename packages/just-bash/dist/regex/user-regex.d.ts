@@ -45,6 +45,9 @@ export declare class UserRegex implements RegexLike {
     private readonly _multiline;
     private _lastIndex;
     private _nativeRegex;
+    private _matcher;
+    private _matcherInput;
+    private acquireMatcher;
     constructor(pattern: string, flags?: string);
     /**
      * Test if the pattern matches the input string.

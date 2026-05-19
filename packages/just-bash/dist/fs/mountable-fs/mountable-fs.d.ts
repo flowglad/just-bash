@@ -1,3 +1,4 @@
+import { type ByteString } from "../../encoding.js";
 import type { BufferEncoding, CpOptions, FileContent, FsStat, IFileSystem, MkdirOptions, ReadFileOptions, RmOptions, WriteFileOptions } from "../interface.js";
 /**
  * Configuration for a mount point
@@ -80,6 +81,7 @@ export declare class MountableFs implements IFileSystem {
      */
     private getChildMountPoints;
     readFile(path: string, options?: ReadFileOptions | BufferEncoding): Promise<string>;
+    readFileBytes(path: string): Promise<ByteString>;
     readFileBuffer(path: string): Promise<Uint8Array>;
     writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;
     appendFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;

@@ -6,6 +6,7 @@
  * Convert blanks in each FILE to TABs, writing to standard output.
  * If no FILE is specified, standard input is read.
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 const unexpandHelp = {
     name: "unexpand",
@@ -229,7 +230,9 @@ export const unexpand = {
         }
         let output = "";
         if (files.length === 0) {
-            const input = ctx.stdin ?? "";
+            // unexpand counts column positions for tab-stop math; decode bytes so
+            // a multibyte char doesn't pretend to be several columns wide.
+            const input = decodeBytesToUtf8(ctx.stdin) ?? "";
             output = processContent(input, options);
         }
         else {
@@ -246,6 +249,7 @@ export const unexpand = {
                 output += processContent(content, options);
             }
         }
+        // unexpand emits text; the pipeline handles encoding.
         return {
             exitCode: 0,
             stdout: output,

@@ -12,6 +12,7 @@
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { sanitizeErrorMessage, sanitizeHostErrorMessage, } from "../../fs/sanitize-error.js";
 import { mapToRecord } from "../../helpers/env.js";
 import { getErrorMessage } from "../../interpreter/helpers/errors.js";
@@ -382,7 +383,10 @@ async function executePython(pythonCode, ctx, scriptPath, scriptArgs = []) {
             exitCode: bridgeOutput.exitCode || 1,
         };
     }
-    return bridgeOutput;
+    // python3 emits text; the pipeline handles encoding.
+    return {
+        ...bridgeOutput,
+    };
 }
 export const python3Command = {
     name: "python3",
@@ -423,7 +427,8 @@ export const python3Command = {
             // CPython's `python3 -` reads the program from standard input.
             // Empty stdin runs an empty program (exit 0) — matching CPython's
             // behavior in non-interactive contexts where no program is provided.
-            pythonCode = ctx.stdin;
+            // Decode bytes — Python source can hold unicode string literals.
+            pythonCode = decodeBytesToUtf8(ctx.stdin);
             scriptPath = "-";
         }
         else if (parsed.scriptFile !== null) {
@@ -448,8 +453,8 @@ export const python3Command = {
                 };
             }
         }
-        else if (ctx.stdin.trim()) {
-            pythonCode = ctx.stdin;
+        else if (decodeBytesToUtf8(ctx.stdin).trim()) {
+            pythonCode = decodeBytesToUtf8(ctx.stdin);
             scriptPath = "<stdin>";
         }
         else {

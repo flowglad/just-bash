@@ -5,8 +5,9 @@
  * requests from a worker thread via SharedArrayBuffer + Atomics.
  */
 import { fromBuffer } from "../../fs/encoding.js";
-import { sanitizeErrorMessage } from "../../fs/real-fs-utils.js";
+import { sanitizeErrorMessage, sanitizeHostErrorMessage, } from "../../fs/sanitize-error.js";
 import { shellJoinArgs } from "../../helpers/shell-quote.js";
+import { DefenseInDepthBox } from "../../security/defense-in-depth-box.js";
 import { _clearTimeout, _setTimeout } from "../../timers.js";
 import { ErrorCode, Flags, OpCode, ProtocolBuffer, Status, } from "./protocol.js";
 /**
@@ -19,19 +20,21 @@ export class BridgeHandler {
     secureFetch;
     maxOutputSize;
     exec;
+    invokeTool;
     protocol;
     running = false;
     output = { stdout: "", stderr: "", exitCode: 0 };
     outputLimitExceeded = false;
     startTime = 0;
     timeoutMs = 0;
-    constructor(sharedBuffer, fs, cwd, commandName, secureFetch = undefined, maxOutputSize = 0, exec = undefined) {
+    constructor(sharedBuffer, fs, cwd, commandName, secureFetch = undefined, maxOutputSize = 0, exec = undefined, invokeTool = undefined) {
         this.fs = fs;
         this.cwd = cwd;
         this.commandName = commandName;
         this.secureFetch = secureFetch;
         this.maxOutputSize = maxOutputSize;
         this.exec = exec;
+        this.invokeTool = invokeTool;
         this.protocol = new ProtocolBuffer(sharedBuffer);
     }
     /**
@@ -164,6 +167,9 @@ export class BridgeHandler {
                     break;
                 case OpCode.EXEC_COMMAND:
                     await this.handleExecCommand();
+                    break;
+                case OpCode.INVOKE_TOOL:
+                    await this.handleInvokeTool();
                     break;
                 default:
                     this.protocol.setErrorCode(ErrorCode.IO_ERROR);
@@ -521,6 +527,28 @@ export class BridgeHandler {
         catch (e) {
             controller.abort();
             const message = e instanceof Error ? e.message : String(e);
+            this.protocol.setErrorCode(ErrorCode.IO_ERROR);
+            this.protocol.setResultFromString(message);
+            this.protocol.setStatus(Status.ERROR);
+        }
+    }
+    async handleInvokeTool() {
+        const invokeToolFn = this.invokeTool;
+        if (!invokeToolFn) {
+            this.protocol.setErrorCode(ErrorCode.IO_ERROR);
+            this.protocol.setResultFromString("Tool invocation not available in this context.");
+            this.protocol.setStatus(Status.ERROR);
+            return;
+        }
+        const path = this.protocol.getPath();
+        const argsJson = this.protocol.getDataAsString();
+        try {
+            const resultJson = await this.raceDeadline(() => DefenseInDepthBox.runTrustedAsync(() => invokeToolFn(path, argsJson)));
+            this.protocol.setResultFromString(resultJson);
+            this.protocol.setStatus(Status.SUCCESS);
+        }
+        catch (e) {
+            const message = sanitizeHostErrorMessage(e instanceof Error ? e.message : String(e));
             this.protocol.setErrorCode(ErrorCode.IO_ERROR);
             this.protocol.setResultFromString(message);
             this.protocol.setStatus(Status.ERROR);

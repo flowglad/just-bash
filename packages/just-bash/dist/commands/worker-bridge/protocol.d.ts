@@ -38,6 +38,7 @@ export declare const OpCode: {
     readonly EXIT: 102;
     readonly HTTP_REQUEST: 200;
     readonly EXEC_COMMAND: 300;
+    readonly INVOKE_TOOL: 400;
 };
 export type OpCodeType = (typeof OpCode)[keyof typeof OpCode];
 /** Status codes for synchronization */

@@ -9,6 +9,7 @@
  * - Built-in commands (builtins.ts)
  * - Redirections (redirections.ts)
  */
+import { encodeUtf8ToBytes, latin1FromBytes, readBytesFrom, } from "../encoding.js";
 import { mapToRecord } from "../helpers/env.js";
 import { ParseException } from "../parser/types.js";
 import { DefenseInDepthBox, SecurityViolationError, } from "../security/defense-in-depth-box.js";
@@ -48,6 +49,7 @@ export class Interpreter {
             coverage: options.coverage,
             requireDefenseContext: options.requireDefenseContext ?? false,
             jsBootstrapCode: options.jsBootstrapCode,
+            invokeTool: options.invokeTool,
         };
     }
     /**
@@ -475,6 +477,12 @@ export class Interpreter {
                         .map((line) => line.replace(/^\t+/, ""))
                         .join("\n");
                 }
+                // Heredocs land here as JS Unicode text; the pipeline contract
+                // expects stdin to be a latin1 byte buffer. UTF-8 encode the
+                // text once at the source so byte consumers downstream see real
+                // bytes and binary writes don't truncate codepoints to their
+                // low byte.
+                content = latin1FromBytes(encodeUtf8ToBytes(content));
                 // If this is a non-standard fd (not 0), store in fileDescriptors for -u option
                 const fd = redir.fd ?? 0;
                 if (fd !== 0) {
@@ -490,14 +498,19 @@ export class Interpreter {
                 continue;
             }
             if (redir.operator === "<<<" && redir.target.type === "Word") {
-                stdin = `${await expandWord(this.ctx, redir.target)}\n`;
+                // Same byte-encoding step as heredoc — here-strings deliver
+                // JS Unicode text and need to land as bytes.
+                stdin = latin1FromBytes(encodeUtf8ToBytes(`${await expandWord(this.ctx, redir.target)}\n`));
                 continue;
             }
             if (redir.operator === "<" && redir.target.type === "Word") {
                 try {
                     const target = await expandWord(this.ctx, redir.target);
                     const filePath = this.ctx.fs.resolvePath(this.ctx.state.cwd, target);
-                    stdin = await this.ctx.fs.readFile(filePath);
+                    // Read as raw bytes — `<` is a transparent file-to-stdin
+                    // pipe and we don't want the smart-utf8 read path turning
+                    // valid bytes into U+FFFD replacement chars.
+                    stdin = latin1FromBytes(await readBytesFrom(this.ctx.fs, filePath));
                 }
                 catch {
                     const target = await expandWord(this.ctx, redir.target);

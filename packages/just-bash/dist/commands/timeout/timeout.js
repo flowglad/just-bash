@@ -1,3 +1,4 @@
+import { latin1FromBytes } from "../../encoding.js";
 import { shellJoinArgs } from "../../helpers/shell-quote.js";
 import { _clearTimeout, _setTimeout } from "../../timers.js";
 import { parseDuration } from "../duration.js";
@@ -127,7 +128,9 @@ export const timeoutCommand = {
                 .exec(shellJoinArgs([commandArgs[0]]), {
                 cwd: ctx.cwd,
                 signal: controller.signal,
-                stdin: ctx.stdin,
+                stdin: latin1FromBytes(ctx.stdin),
+                // ctx.stdin is already byte-shaped — forward verbatim.
+                stdinKind: "bytes",
                 args: commandArgs.slice(1),
             })
                 .then((result) => ({ timedOut: false, result }));

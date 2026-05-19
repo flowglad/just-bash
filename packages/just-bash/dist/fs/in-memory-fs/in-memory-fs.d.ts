@@ -1,3 +1,4 @@
+import { type ByteString } from "../../encoding.js";
 import type { BufferEncoding, CpOptions, DirectoryEntry, DirentEntry, FileContent, FileEntry, FsEntry, FsStat, IFileSystem, InitialFiles, LazyFileEntry, MkdirOptions, ReadFileOptions, RmOptions, SymlinkEntry, WriteFileOptions } from "../interface.js";
 export type { BufferEncoding, FileContent, FileEntry, LazyFileEntry, DirectoryEntry, SymlinkEntry, FsEntry, FsStat, IFileSystem, };
 export interface FsData {
@@ -25,6 +26,7 @@ export declare class InMemoryFs implements IFileSystem {
      */
     private materializeLazy;
     readFile(path: string, options?: ReadFileOptions | BufferEncoding): Promise<string>;
+    readFileBytes(path: string): Promise<ByteString>;
     readFileBuffer(path: string): Promise<Uint8Array>;
     writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;
     appendFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;
