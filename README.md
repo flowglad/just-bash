@@ -3,8 +3,8 @@
 > ## Flowglad fork notes
 >
 > This is [Flowglad](https://github.com/flowglad)'s fork of [`vercel-labs/just-bash`](https://github.com/vercel-labs/just-bash).
-> We carry three patches that fix issues encountered while embedding just-bash
-> in our reasoning agent. Each patch lives at TypeScript-source level on the
+> We carry one patch that fixes an issue encountered while embedding just-bash
+> in our reasoning agent. The patch lives at TypeScript-source level on the
 > `flowglad-main` branch (this repo's default) and is reflected in the
 > committed `dist/`. Consumers must pin a package-root tag named
 > `v<upstream>-fgp.<n>` (for example, `v2.14.3-fgp.1`), not the branch and not a
@@ -12,9 +12,9 @@
 >
 > | Patch | What it fixes | Upstream PR |
 > | --- | --- | --- |
-> | `sqlite3-dot-commands` | sql.js doesn't implement sqlite3's CLI dot-commands (`.tables`, `.schema`, `.mode`, `.read`, `.separator`, `.quit`, etc.), so agent scripts pasted from real `sqlite3` sessions hit syntax errors. We carry a preprocessor (`commands/sqlite3/dot-commands.ts`) that translates each dot-command to equivalent SQL, formatter-state mutations, recursive `.read` inlining, or actionable in-band error messages before handing the script to the worker. (The original `sqlite3-worker` bundling bug was upstreamed in [vercel-labs#190](https://github.com/vercel-labs/just-bash/pull/190).) | _filed in Patch 2_ |
-> | `awk-comma-continuation` | The bundled awk lexer emits a `NEWLINE` token after a trailing comma, breaking POSIX comma-continuation in scripts our agent runs. | _filed in Patch 2_ |
-> | `jq-permissive-control-chars` | The bundled jq input scanner calls `JSON.parse` on raw bytes that may contain literal control characters (which Shopify's Admin API responses do), failing parse. We sanitize the slice before parsing. | _filed in Patch 2_ |
+> | `sqlite3-dot-commands` | sql.js doesn't implement sqlite3's CLI dot-commands (`.tables`, `.schema`, `.mode`, `.read`, `.separator`, `.quit`, etc.), so agent scripts pasted from real `sqlite3` sessions hit syntax errors. We carry a preprocessor (`commands/sqlite3/dot-commands.ts`) that translates each dot-command to equivalent SQL, formatter-state mutations, recursive `.read` inlining, or actionable in-band error messages before handing the script to the worker. (The original `sqlite3-worker` bundling bug was upstreamed in [vercel-labs#190](https://github.com/vercel-labs/just-bash/pull/190).) | [vercel-labs#249](https://github.com/vercel-labs/just-bash/pull/249) |
+>
+> The `awk-comma-continuation` patch (upstreamed in [vercel-labs#206](https://github.com/vercel-labs/just-bash/pull/206)) and the `jq-permissive-control-chars` patch (upstreamed in [vercel-labs#214](https://github.com/vercel-labs/just-bash/pull/214)) have been retired — those issues are fixed in upstream and our source matches it byte-for-byte.
 >
 > ### Releasing
 >
