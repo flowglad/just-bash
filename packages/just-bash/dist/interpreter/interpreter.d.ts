@@ -41,6 +41,8 @@ export interface InterpreterOptions {
     requireDefenseContext?: boolean;
     /** Bootstrap JavaScript code for js-exec */
     jsBootstrapCode?: string;
+    /** Tool invoker hook for js-exec's `tools` proxy */
+    invokeTool?: (path: string, argsJson: string) => Promise<string>;
 }
 export declare class Interpreter {
     private ctx;

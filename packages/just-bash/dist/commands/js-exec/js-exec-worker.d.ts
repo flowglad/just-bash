@@ -21,6 +21,8 @@ export interface JsExecWorkerInput {
     isModule?: boolean;
     stripTypes?: boolean;
     timeoutMs?: number;
+    /** When true, the QuickJS guest gets a `tools` proxy that calls the host's invokeTool hook. */
+    hasInvokeTool?: boolean;
 }
 export interface JsExecWorkerOutput {
     protocolToken?: string;

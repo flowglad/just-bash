@@ -6,6 +6,7 @@
  * Write each FILE to standard output, with line numbers added.
  * If no FILE is specified, standard input is read.
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 const nlHelp = {
     name: "nl",
@@ -250,8 +251,9 @@ export const nl = {
         let output = "";
         let lineNumber = options.startNumber;
         if (files.length === 0) {
-            // Read from stdin
-            const input = ctx.stdin ?? "";
+            // Read from stdin. nl reads files as utf8 by default; normalize stdin
+            // to text so the line-numbered output is consistent with file inputs.
+            const input = decodeBytesToUtf8(ctx.stdin) ?? "";
             const result = processContent(input, options, lineNumber);
             output = result.output;
         }
@@ -272,6 +274,7 @@ export const nl = {
                 lineNumber = result.nextNumber;
             }
         }
+        // nl emits text; the pipeline handles encoding.
         return {
             exitCode: 0,
             stdout: output,

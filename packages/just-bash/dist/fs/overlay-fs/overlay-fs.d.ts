@@ -10,6 +10,7 @@
  * canonical path for I/O (closing the TOCTOU gap). New methods must use these
  * gates — never access the real FS directly.
  */
+import { type ByteString } from "../../encoding.js";
 import { type FileContent } from "../encoding.js";
 import type { CpOptions, DirentEntry, FsStat, IFileSystem, MkdirOptions, ReadFileOptions, RmOptions, WriteFileOptions } from "../interface.js";
 export interface OverlayFsOptions {
@@ -106,6 +107,7 @@ export declare class OverlayFs implements IFileSystem {
      */
     private existsInOverlay;
     readFile(path: string, options?: ReadFileOptions | BufferEncoding): Promise<string>;
+    readFileBytes(path: string): Promise<ByteString>;
     readFileBuffer(path: string, seen?: Set<string>): Promise<Uint8Array>;
     writeFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;
     appendFile(path: string, content: FileContent, options?: WriteFileOptions | BufferEncoding): Promise<void>;

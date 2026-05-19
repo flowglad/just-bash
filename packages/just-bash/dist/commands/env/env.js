@@ -1,3 +1,4 @@
+import { latin1FromBytes } from "../../encoding.js";
 import { mapToRecord } from "../../helpers/env.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 const envHelp = {
@@ -107,7 +108,9 @@ export const envCommand = {
             cwd: ctx.cwd,
             env: mapToRecord(newEnv),
             replaceEnv: true,
-            stdin: ctx.stdin,
+            stdin: latin1FromBytes(ctx.stdin),
+            // ctx.stdin is already byte-shaped — forward verbatim.
+            stdinKind: "bytes",
             signal: ctx.signal,
             args: cmdArgs,
         });

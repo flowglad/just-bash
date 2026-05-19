@@ -443,7 +443,7 @@ async function preprocessDotCommandsInternal(sql, mutation, ctx) {
                 return {
                     sql: out,
                     formatterMutation: mutation,
-                    error: result.message,
+                    error: sanitizeErrorMessage(result.message),
                 };
             }
             else {

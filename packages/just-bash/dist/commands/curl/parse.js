@@ -4,6 +4,20 @@
 import { _Headers } from "../../security/trusted-globals.js";
 import { unknownOption } from "../help.js";
 import { encodeFormData, parseFormField } from "./form.js";
+function unsupportedDataFileForm(option) {
+    return {
+        stdout: "",
+        stderr: `curl: ${option} @file is not supported in just-bash\n`,
+        exitCode: 2,
+    };
+}
+function usesDataUrlencodeFileForm(value) {
+    if (value.startsWith("@"))
+        return true;
+    const eqIndex = value.indexOf("=");
+    const atIndex = value.indexOf("@");
+    return atIndex > 0 && (eqIndex < 0 || atIndex < eqIndex);
+}
 /**
  * Parse curl command line arguments
  */
@@ -11,7 +25,9 @@ export function parseOptions(args) {
     const options = {
         method: "GET",
         headers: new _Headers(),
+        dataParts: [],
         dataBinary: false,
+        getMode: false,
         formFields: [],
         useRemoteName: false,
         headOnly: false,
@@ -54,43 +70,71 @@ export function parseOptions(args) {
                 options.headers.append(name, value);
             }
         }
+        else if (arg === "-G" || arg === "--get") {
+            options.getMode = true;
+            options.method = "GET";
+        }
         else if (arg === "-d" || arg === "--data" || arg === "--data-raw") {
-            options.data = args[++i] ?? "";
-            impliesPost = true;
+            const value = args[++i] ?? "";
+            if (arg !== "--data-raw" && value.startsWith("@")) {
+                return unsupportedDataFileForm(arg);
+            }
+            options.dataParts.push({ value });
+            if (!options.getMode)
+                impliesPost = true;
         }
         else if (arg.startsWith("-d")) {
-            options.data = arg.slice(2);
-            impliesPost = true;
+            const value = arg.slice(2);
+            if (value.startsWith("@")) {
+                return unsupportedDataFileForm("-d");
+            }
+            options.dataParts.push({ value });
+            if (!options.getMode)
+                impliesPost = true;
         }
         else if (arg.startsWith("--data=")) {
-            options.data = arg.slice(7);
-            impliesPost = true;
+            const value = arg.slice(7);
+            if (value.startsWith("@")) {
+                return unsupportedDataFileForm("--data");
+            }
+            options.dataParts.push({ value });
+            if (!options.getMode)
+                impliesPost = true;
         }
         else if (arg.startsWith("--data-raw=")) {
-            options.data = arg.slice(11);
-            impliesPost = true;
+            options.dataParts.push({ value: arg.slice(11) });
+            if (!options.getMode)
+                impliesPost = true;
         }
         else if (arg === "--data-binary") {
-            options.data = args[++i] ?? "";
+            options.dataParts.push({ value: args[++i] ?? "" });
             options.dataBinary = true;
-            impliesPost = true;
+            if (!options.getMode)
+                impliesPost = true;
         }
         else if (arg.startsWith("--data-binary=")) {
-            options.data = arg.slice(14);
+            options.dataParts.push({ value: arg.slice(14) });
             options.dataBinary = true;
-            impliesPost = true;
+            if (!options.getMode)
+                impliesPost = true;
         }
         else if (arg === "--data-urlencode") {
             const value = args[++i] ?? "";
-            options.data =
-                (options.data ? `${options.data}&` : "") + encodeFormData(value);
-            impliesPost = true;
+            if (usesDataUrlencodeFileForm(value)) {
+                return unsupportedDataFileForm("--data-urlencode");
+            }
+            options.dataParts.push({ value: encodeFormData(value) });
+            if (!options.getMode)
+                impliesPost = true;
         }
         else if (arg.startsWith("--data-urlencode=")) {
             const value = arg.slice(17);
-            options.data =
-                (options.data ? `${options.data}&` : "") + encodeFormData(value);
-            impliesPost = true;
+            if (usesDataUrlencodeFileForm(value)) {
+                return unsupportedDataFileForm("--data-urlencode");
+            }
+            options.dataParts.push({ value: encodeFormData(value) });
+            if (!options.getMode)
+                impliesPost = true;
         }
         else if (arg === "-F" || arg === "--form") {
             const formData = args[++i] ?? "";
@@ -267,6 +311,10 @@ export function parseOptions(args) {
                     case "v":
                         options.verbose = true;
                         break;
+                    case "G":
+                        options.getMode = true;
+                        options.method = "GET";
+                        break;
                     default:
                         return unknownOption("curl", `-${c}`);
                 }
@@ -277,7 +325,10 @@ export function parseOptions(args) {
         }
     }
     // Data/form options imply POST when no explicit method was set
-    if (impliesPost && options.method === "GET") {
+    if (options.dataParts.length > 0) {
+        options.data = options.dataParts.map((part) => part.value).join("&");
+    }
+    if (impliesPost && options.method === "GET" && !options.getMode) {
         options.method = "POST";
     }
     return options;

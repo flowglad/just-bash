@@ -3,6 +3,7 @@
  *
  * Full jq implementation with proper parser and evaluator.
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { sanitizeErrorMessage } from "../../fs/sanitize-error.js";
 import { ExecutionLimitError } from "../../interpreter/errors.js";
 import { assertDefenseContext, awaitWithDefenseContext, } from "../../security/defense-context.js";
@@ -302,13 +303,15 @@ export const jqCommand = {
                 files.push(a);
             }
         }
-        // Build list of inputs: stdin or files
+        // Build list of inputs: stdin or files. jq parses JSON, so the input
+        // bytes are decoded to UTF-8 before parsing — without this, multi-byte
+        // sequences inside string values get re-encoded twice and emit mojibake.
         let inputs = [];
         if (nullInput) {
             // No input
         }
         else if (files.length === 0 || (files.length === 1 && files[0] === "-")) {
-            inputs.push({ source: "stdin", content: ctx.stdin });
+            inputs.push({ source: "stdin", content: decodeBytesToUtf8(ctx.stdin) });
         }
         else {
             // Read all files in parallel using shared utility
@@ -325,7 +328,7 @@ export const jqCommand = {
             }
             inputs = result.files.map((f) => ({
                 source: f.filename || "stdin",
-                content: f.content,
+                content: decodeBytesToUtf8(f.content),
             }));
         }
         try {
@@ -382,8 +385,10 @@ export const jqCommand = {
                     values.every((v) => v === null || v === undefined || v === false))
                 ? 1
                 : 0;
+            // jq emits text; the pipeline handles encoding.
+            const stdoutText = output ? (joinOutput ? output : `${output}\n`) : "";
             return {
-                stdout: output ? (joinOutput ? output : `${output}\n`) : "",
+                stdout: stdoutText,
                 stderr: "",
                 exitCode,
             };

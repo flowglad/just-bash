@@ -5,6 +5,7 @@
  * NOTE: Standard Unix commands (tac, od, hostname) are now in src/commands/
  */
 import { defineCommand } from "../custom-commands.js";
+import { latin1FromBytes } from "../encoding.js";
 // argv.py - prints arguments in Python 2 repr() format: ['arg1', "arg with '"]
 // Python uses single quotes by default, double quotes when string contains single quotes
 // Python 2 escapes non-printable and non-ASCII bytes as \xNN
@@ -98,8 +99,8 @@ export const readFromFdCommand = defineCommand("read_from_fd.py", async (args, c
         }
         let content = "";
         if (fd === 0) {
-            // FD 0 is stdin
-            content = ctx.stdin || "";
+            // FD 0 is stdin — diagnostic only, byte-clean passthrough
+            content = latin1FromBytes(ctx.stdin) || "";
         }
         else if (ctx.fileDescriptors) {
             // Other FDs from the fileDescriptors map

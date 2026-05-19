@@ -6,6 +6,7 @@
  * - Column 2: lines only in FILE2
  * - Column 3: lines in both files
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 const commHelp = {
     name: "comm",
@@ -70,10 +71,13 @@ export const commCommand = {
                 exitCode: 1,
             };
         }
-        // Read file contents
+        // Read file contents. comm compares lines as strings, and stdin and the
+        // file path go through different decoding paths (latin1 byte buffer vs
+        // utf8 string). Normalize both sides to UTF-8 text so identical input
+        // compares equal regardless of which leg it came from.
         const readFile = async (file) => {
             if (file === "-") {
-                return ctx.stdin;
+                return decodeBytesToUtf8(ctx.stdin);
             }
             try {
                 const path = ctx.fs.resolvePath(ctx.cwd, file);
@@ -152,7 +156,12 @@ export const commCommand = {
                 j++;
             }
         }
-        return { stdout: output, stderr: "", exitCode: 0 };
+        // comm emits text; the pipeline handles encoding.
+        return {
+            stdout: output,
+            stderr: "",
+            exitCode: 0,
+        };
     },
 };
 export const flagsForFuzzing = {

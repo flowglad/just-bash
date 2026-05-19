@@ -22,13 +22,14 @@ export declare class BridgeHandler {
     private secureFetch;
     private maxOutputSize;
     private exec;
+    private invokeTool;
     private protocol;
     private running;
     private output;
     private outputLimitExceeded;
     private startTime;
     private timeoutMs;
-    constructor(sharedBuffer: SharedArrayBuffer, fs: IFileSystem, cwd: string, commandName: string, secureFetch?: SecureFetch | undefined, maxOutputSize?: number, exec?: ((command: string, options: CommandExecOptions) => Promise<ExecResult>) | undefined);
+    constructor(sharedBuffer: SharedArrayBuffer, fs: IFileSystem, cwd: string, commandName: string, secureFetch?: SecureFetch | undefined, maxOutputSize?: number, exec?: ((command: string, options: CommandExecOptions) => Promise<ExecResult>) | undefined, invokeTool?: ((path: string, argsJson: string) => Promise<string>) | undefined);
     /**
      * Returns remaining milliseconds before the overall execution deadline.
      */
@@ -67,5 +68,6 @@ export declare class BridgeHandler {
     private appendOutputLimitError;
     private handleHttpRequest;
     private handleExecCommand;
+    private handleInvokeTool;
     private setErrorFromException;
 }

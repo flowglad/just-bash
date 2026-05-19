@@ -25,6 +25,17 @@ function wrapFunction(fn, requireDefenseContext, component, phase) {
 function wrapFileSystem(fs, requireDefenseContext, component) {
     const wrappedFs = {
         readFile: wrapFunction(fs.readFile.bind(fs), requireDefenseContext, component, "fs.readFile"),
+        // readFileBytes is optional on IFileSystem (custom external fs may
+        // predate it). Only wrap when it exists; internal callers go through
+        // `readBytesFrom` which falls back to readFileBuffer otherwise.
+        // Spread a null-prototype object on the missing branch instead of
+        // `{}` so the conditional adds either one wrapped method or zero,
+        // without leaking `Object.prototype`.
+        ...(typeof fs.readFileBytes === "function"
+            ? {
+                readFileBytes: wrapFunction(fs.readFileBytes.bind(fs), requireDefenseContext, component, "fs.readFileBytes"),
+            }
+            : Object.create(null)),
         readFileBuffer: wrapFunction(fs.readFileBuffer.bind(fs), requireDefenseContext, component, "fs.readFileBuffer"),
         writeFile: wrapFunction(fs.writeFile.bind(fs), requireDefenseContext, component, "fs.writeFile"),
         appendFile: wrapFunction(fs.appendFile.bind(fs), requireDefenseContext, component, "fs.appendFile"),

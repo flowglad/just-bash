@@ -1,6 +1,7 @@
 /**
  * Simple commands: behead, sample, cat, search, flatmap, fmt
  */
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { createUserRegex } from "../../regex/index.js";
 import { readFiles } from "../../utils/file-reader.js";
 import { evaluate } from "../query-engine/index.js";
@@ -23,7 +24,12 @@ export async function cmdBehead(args, ctx) {
     const rows = data.map((row) => headers.map((h) => row[h]));
     const output = rows.map((row) => row.map((v) => formatValue(v)).join(",")).join("\n") +
         "\n";
-    return { stdout: output, stderr: "", exitCode: 0 };
+    // xan emits text; the pipeline handles encoding.
+    return {
+        stdout: output,
+        stderr: "",
+        exitCode: 0,
+    };
 }
 function formatValue(v) {
     if (v === null || v === undefined)
@@ -70,7 +76,12 @@ export async function cmdSample(args, ctx) {
     if (error)
         return error;
     if (data.length <= num) {
-        return { stdout: formatCsv(headers, data), stderr: "", exitCode: 0 };
+        // xan emits text; the pipeline handles encoding.
+        return {
+            stdout: formatCsv(headers, data),
+            stderr: "",
+            exitCode: 0,
+        };
     }
     // Simple seeded random (LCG)
     let rng = seed !== null ? seed : Date.now();
@@ -88,7 +99,12 @@ export async function cmdSample(args, ctx) {
         .slice(0, num)
         .sort((a, b) => a - b)
         .map((i) => data[i]);
-    return { stdout: formatCsv(headers, sampled), stderr: "", exitCode: 0 };
+    // xan emits text; the pipeline handles encoding.
+    return {
+        stdout: formatCsv(headers, sampled),
+        stderr: "",
+        exitCode: 0,
+    };
 }
 /**
  * Cat: concatenate CSV files
@@ -126,7 +142,7 @@ export async function cmdCat(args, ctx) {
     const allFiles = [];
     let allHeaders = [];
     for (const { content } of result.files) {
-        const { headers, data } = parseCsv(content);
+        const { headers, data } = parseCsv(decodeBytesToUtf8(content));
         allFiles.push({ headers, data });
         // Collect all unique headers
         for (const h of headers) {
@@ -160,7 +176,12 @@ export async function cmdCat(args, ctx) {
             allData.push(newRow);
         }
     }
-    return { stdout: formatCsv(allHeaders, allData), stderr: "", exitCode: 0 };
+    // xan emits text; the pipeline handles encoding.
+    return {
+        stdout: formatCsv(allHeaders, allData),
+        stderr: "",
+        exitCode: 0,
+    };
 }
 /**
  * Search: filter rows by regex match on any/specific columns
@@ -227,7 +248,12 @@ export async function cmdSearch(args, ctx) {
         });
         return invert ? !matches : matches;
     });
-    return { stdout: formatCsv(headers, filtered), stderr: "", exitCode: 0 };
+    // xan emits text; the pipeline handles encoding.
+    return {
+        stdout: formatCsv(headers, filtered),
+        stderr: "",
+        exitCode: 0,
+    };
 }
 /**
  * Flatmap: like map but expression can return multiple rows
@@ -294,7 +320,12 @@ export async function cmdFlatmap(args, ctx) {
             newData.push(newRow);
         }
     }
-    return { stdout: formatCsv(newHeaders, newData), stderr: "", exitCode: 0 };
+    // xan emits text; the pipeline handles encoding.
+    return {
+        stdout: formatCsv(newHeaders, newData),
+        stderr: "",
+        exitCode: 0,
+    };
 }
 /**
  * Fmt: format CSV as a table (alias for view with options)

@@ -1,3 +1,4 @@
+import { decodeBytesToUtf8 } from "../../encoding.js";
 import { sanitizeErrorMessage } from "../../fs/sanitize-error.js";
 import { ExecutionLimitError } from "../../interpreter/errors.js";
 import { assertDefenseContext, awaitWithDefenseContext, } from "../../security/defense-context.js";
@@ -444,9 +445,11 @@ export const sedCommand = {
             return { stdout: "", stderr: "", exitCode: 0 };
         }
         let content = "";
-        // Read from files or stdin
+        // Read from files or stdin. sed runs regex over text — decode bytes to
+        // UTF-8 so multibyte sequences match as single chars rather than several
+        // latin1 bytes.
         if (files.length === 0) {
-            content = ctx.stdin;
+            content = decodeBytesToUtf8(ctx.stdin);
             try {
                 const result = await withDefenseContext("stdin processing", () => processContent(content, commands, effectiveSilent, {
                     limits: ctx.limits,
@@ -455,6 +458,7 @@ export const sedCommand = {
                     coverage: ctx.coverage,
                     requireDefenseContext: ctx.requireDefenseContext,
                 }));
+                // sed emits text; the pipeline handles encoding.
                 return {
                     stdout: result.output,
                     stderr: result.errorMessage ? `${result.errorMessage}\n` : "",
@@ -487,7 +491,7 @@ export const sedCommand = {
                     fileContent = "";
                 }
                 else {
-                    fileContent = ctx.stdin;
+                    fileContent = decodeBytesToUtf8(ctx.stdin);
                     stdinConsumed = true;
                 }
             }

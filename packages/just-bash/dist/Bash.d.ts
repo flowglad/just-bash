@@ -30,6 +30,24 @@ export interface BashLogger {
 export interface JavaScriptConfig {
     /** Bootstrap JavaScript code to run before user scripts */
     bootstrap?: string;
+    /**
+     * Tool invocation hook. When provided, code running in `js-exec` gets a
+     * global `tools` proxy that routes calls through this callback synchronously
+     * (the worker blocks via `Atomics.wait` while the host resolves the call).
+     *
+     * - `path`: dot-separated tool path (e.g. `"math.add"`). The proxy builds
+     *   it from JS property access — `tools.math.add(...)` becomes `"math.add"`.
+     * - `argsJson`: JSON-stringified args object, or empty string for no args.
+     * - return: JSON-stringified result, or empty string for `undefined`.
+     * - throw: propagates as a catchable exception inside the sandbox.
+     *
+     * Setting `invokeTool` implicitly enables `js-exec` (no separate
+     * `javascript: true` needed). Pair with `customCommands` if you want the
+     * same tools available as bash commands. The companion package
+     * `@just-bash/executor` produces a matching `invokeTool` + `commands` pair
+     * from inline tools and/or `@executor-js/sdk` discovery.
+     */
+    invokeTool?: (path: string, argsJson: string) => Promise<string>;
 }
 export interface BashOptions {
     files?: InitialFiles;
@@ -190,6 +208,14 @@ export interface ExecOptions {
      */
     stdin?: string;
     /**
+     * Shape of {@link stdin} — see `CommandExecOptions.stdinKind`.
+     * Defaults to `"text"` (UTF-8 encoded into bytes for byte consumers
+     * inside the script). Pass `"bytes"` when you've prepared a latin1
+     * byte buffer (e.g. `Buffer.from(buf).toString("latin1")`) and want
+     * it forwarded verbatim.
+     */
+    stdinKind?: "text" | "bytes";
+    /**
      * Abort signal for cooperative cancellation.
      * When aborted, the interpreter stops executing at the next statement boundary.
      */
@@ -214,6 +240,7 @@ export declare class Bash {
     private defenseInDepthConfig?;
     private coverageWriter?;
     private jsBootstrapCode?;
+    private invokeToolFn?;
     private transformPlugins;
     private state;
     constructor(options?: BashOptions);
