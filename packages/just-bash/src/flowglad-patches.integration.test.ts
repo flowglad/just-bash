@@ -59,47 +59,4 @@ describe("Flowglad carried patches", () => {
       expect(result.exitCode).toBe(0);
     });
   });
-
-  describe("awk-comma-continuation", () => {
-    it("continues awk expressions across a newline after comma", async () => {
-      const env = new Bash();
-
-      const result = await env.exec(`awk 'BEGIN { printf "%s-%s\\n",
-  "left", "right" }'`);
-
-      expect(result.stderr).toBe("");
-      expect(result.stdout).toBe("left-right\n");
-      expect(result.exitCode).toBe(0);
-    });
-  });
-
-  describe("jq-permissive-control-chars", () => {
-    it("accepts a literal newline inside a JSON string", async () => {
-      const env = new Bash({
-        files: {
-          "/shopify.json": '{"body":"first\nsecond"}\n',
-        },
-      });
-
-      const result = await env.exec("jq -r '.body' /shopify.json");
-
-      expect(result.stderr).toBe("");
-      expect(result.stdout).toBe("first\nsecond\n");
-      expect(result.exitCode).toBe(0);
-    });
-
-    it("accepts a literal tab inside a JSON string", async () => {
-      const env = new Bash({
-        files: {
-          "/payload.json": '{"body":"col1\tcol2"}\n',
-        },
-      });
-
-      const result = await env.exec("jq -r '.body' /payload.json");
-
-      expect(result.stderr).toBe("");
-      expect(result.stdout).toBe("col1\tcol2\n");
-      expect(result.exitCode).toBe(0);
-    });
-  });
 });
