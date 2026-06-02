@@ -178,10 +178,11 @@ function parseJsonStream(input: string): unknown[] {
 const jqHelp = {
   name: "jq",
   summary: "command-line JSON processor",
-  usage: "jq [OPTIONS] FILTER [FILE]",
+  usage: "jq [OPTIONS] FILTER [FILE...]",
   options: [
+    "-R, --raw-input   read each line as string instead of JSON",
     "-r, --raw-output  output strings without quotes",
-    "-c, --compact     compact output (no pretty printing)",
+    "-c, --compact-output  compact instead of pretty-printed output",
     "-e, --exit-status set exit status based on output",
     "-s, --slurp       read entire input into array",
     "-n, --null-input  don't read any input",
@@ -267,6 +268,7 @@ export const jqCommand: Command = {
     if (hasHelpFlag(args)) return showHelp(jqHelp);
 
     let raw = false;
+    let rawInput = false;
     let compact = false;
     let exitStatus = false;
     let slurp = false;
@@ -280,7 +282,8 @@ export const jqCommand: Command = {
 
     for (let i = 0; i < args.length; i++) {
       const a = args[i];
-      if (a === "-r" || a === "--raw-output") raw = true;
+      if (a === "-R" || a === "--raw-input") rawInput = true;
+      else if (a === "-r" || a === "--raw-output") raw = true;
       else if (a === "-c" || a === "--compact-output") compact = true;
       else if (a === "-e" || a === "--exit-status") exitStatus = true;
       else if (a === "-s" || a === "--slurp") slurp = true;
@@ -298,7 +301,8 @@ export const jqCommand: Command = {
       else if (a.startsWith("--")) return unknownOption("jq", a);
       else if (a.startsWith("-")) {
         for (const c of a.slice(1)) {
-          if (c === "r") raw = true;
+          if (c === "R") rawInput = true;
+          else if (c === "r") raw = true;
           else if (c === "c") compact = true;
           else if (c === "e") exitStatus = true;
           else if (c === "s") slurp = true;
@@ -365,6 +369,33 @@ export const jqCommand: Command = {
 
       if (nullInput) {
         values = evaluate(null, ast, evalOptions);
+      } else if (rawInput && slurp) {
+        // Raw slurp: the entire concatenated input becomes one JSON string.
+        const rawText = inputs.map(({ content }) => content).join("");
+        values = evaluate(rawText, ast, evalOptions);
+      } else if (rawInput) {
+        // Raw input: real jq concatenates all inputs into a single stream and
+        // splits on newlines, so a line can span a file boundary when a file
+        // lacks a trailing newline. Scan incrementally, carrying only the
+        // unterminated trailing fragment across inputs, instead of building the
+        // full concatenated string and a complete array of lines. A trailing
+        // newline does not yield a final empty string, but interior blank
+        // lines are preserved.
+        let remainder = "";
+        for (const { content } of inputs) {
+          const text = remainder + content;
+          let start = 0;
+          let nl = text.indexOf("\n", start);
+          while (nl !== -1) {
+            values.push(...evaluate(text.slice(start, nl), ast, evalOptions));
+            start = nl + 1;
+            nl = text.indexOf("\n", start);
+          }
+          remainder = text.slice(start);
+        }
+        if (remainder !== "") {
+          values.push(...evaluate(remainder, ast, evalOptions));
+        }
       } else if (slurp) {
         // Slurp mode: combine all inputs into single array
         // Use JSON stream parser to handle concatenated JSON (not just NDJSON)
@@ -457,6 +488,7 @@ import type { CommandFuzzInfo } from "../fuzz-flags-types.js";
 export const flagsForFuzzing: CommandFuzzInfo = {
   name: "jq",
   flags: [
+    { flag: "-R", type: "boolean" },
     { flag: "-r", type: "boolean" },
     { flag: "-c", type: "boolean" },
     { flag: "-e", type: "boolean" },
