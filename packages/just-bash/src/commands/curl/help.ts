@@ -14,11 +14,18 @@ export const curlHelp: {
   options: [
     "-X, --request METHOD  HTTP method (GET, POST, PUT, DELETE, etc.)",
     "-H, --header HEADER   Add header (can be used multiple times)",
+<<<<<<< HEAD
     "-d, --data DATA       HTTP POST data",
     "-G, --get             Append data payloads to URL query string",
     "    --data-raw DATA   HTTP POST data (no @ interpretation)",
     "    --data-binary DATA  HTTP POST binary data",
     "    --data-urlencode DATA  URL-encode data",
+=======
+    "-d, --data DATA       HTTP POST data (DATA=@file reads from file, strips newlines)",
+    "    --data-raw DATA   HTTP POST data (no @ interpretation)",
+    "    --data-binary DATA  HTTP POST binary data (DATA=@file reads file verbatim)",
+    "    --data-urlencode DATA  URL-encode and POST data (supports @file and name@file)",
+>>>>>>> @just-bash/executor@1.0.3
     "-F, --form NAME=VALUE  Multipart form data",
     "-u, --user USER:PASS  HTTP authentication",
     "-A, --user-agent STR  Set User-Agent header",
