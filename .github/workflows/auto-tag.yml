@@ -103,15 +103,27 @@ jobs:
           BRANCH="deps/just-bash-${NEW_TAG}"
           git checkout -b "$BRANCH"
 
-          # Targeted replacement; preserves the rest of the file's formatting.
-          for f in packages/agent/package.json packages/agent/trigger-smoke/package.json; do
-            if [ -f "$f" ]; then
-              sed -i "s|\"just-bash\": \"github:flowglad/just-bash#[^\"]*\"|\"just-bash\": \"github:flowglad/just-bash#${NEW_TAG}\"|g" "$f"
-            fi
+          # Discover every package.json that pins github:flowglad/just-bash and
+          # repin it. Discovery (rather than hardcoded paths) keeps this working
+          # when the consumer's package layout changes — e.g. the dep moved from
+          # packages/agent to packages/agent-domain, which silently no-op'd the
+          # old hardcoded list. Skip node_modules.
+          mapfile -t FILES < <(grep -rlE '"just-bash"[[:space:]]*:[[:space:]]*"github:flowglad/just-bash#' \
+            --include=package.json --exclude-dir=node_modules . || true)
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::warning::No package.json pins github:flowglad/just-bash in provisioning-agent; nothing to repin for ${NEW_TAG}. Has the dependency been removed or renamed?"
+            exit 0
+          fi
+
+          echo "Repinning just-bash in: ${FILES[*]}"
+          # Targeted replacement; preserves the rest of each file's formatting.
+          for f in "${FILES[@]}"; do
+            sed -i "s|\"just-bash\": \"github:flowglad/just-bash#[^\"]*\"|\"just-bash\": \"github:flowglad/just-bash#${NEW_TAG}\"|g" "$f"
           done
 
           if git diff --quiet; then
-            echo "No just-bash dependency lines changed in provisioning-agent; nothing to PR"
+            echo "just-bash already pinned to ${NEW_TAG} in provisioning-agent; nothing to PR"
             exit 0
           fi
 
