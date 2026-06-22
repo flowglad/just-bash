@@ -4,7 +4,7 @@
 
 import type { FormField } from "./types.js";
 
-function encodeRfc3986(value: string): string {
+export function encodeRfc3986(value: string): string {
   return encodeURIComponent(value).replace(
     /[!'()*]/g,
     (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
@@ -13,7 +13,8 @@ function encodeRfc3986(value: string): string {
 
 /**
  * URL-encode form data in curl's --data-urlencode format
- * Supports: name=content, =content, content. File forms are rejected by parseOptions.
+ * Supports: name=content, =content, content. The `@file` / `name@file` forms
+ * are detected in parseOptions and deferred to execute time (see resolveData).
  */
 export function encodeFormData(input: string): string {
   // Check for name=value format

@@ -113,24 +113,6 @@ describe("curl form data", () => {
       const headers = new Headers(lastRequest?.options.headers as HeadersInit);
       expect(headers.get("Content-Type")).toBe("text/plain");
     });
-
-    it("reports unsupported --data-urlencode file forms clearly", async () => {
-      const env = new Bash({
-        network: {
-          allowedUrlPrefixes: ["https://api.example.com"],
-          allowedMethods: ["POST"],
-        },
-      });
-      const result = await env.exec(
-        "curl --data-urlencode 'q@/tmp/query.txt' https://api.example.com/post",
-      );
-
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain(
-        "--data-urlencode @file is not supported in just-bash",
-      );
-      expect(lastRequest).toBeNull();
-    });
   });
 
   describe("-G/--get data query strings", () => {
@@ -306,22 +288,6 @@ describe("curl form data", () => {
       );
 
       expect(lastRequest?.options.body).toBe("a=1&b=2&c=3");
-    });
-
-    it("reports unsupported -d @file clearly", async () => {
-      const env = new Bash({
-        network: {
-          allowedUrlPrefixes: ["https://api.example.com"],
-          allowedMethods: ["POST"],
-        },
-      });
-      const result = await env.exec(
-        "curl -d '@/tmp/body.txt' https://api.example.com/post",
-      );
-
-      expect(result.exitCode).toBe(2);
-      expect(result.stderr).toContain("-d @file is not supported in just-bash");
-      expect(lastRequest).toBeNull();
     });
   });
 
