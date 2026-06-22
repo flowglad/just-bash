@@ -32,6 +32,20 @@ export type ErrorFn = (message: string) => never;
  */
 export declare function isDollarDparenSubshell(value: string, start: number): boolean;
 /**
+ * Read a heredoc delimiter starting at `pos` (the first character after the
+ * `<<` / `<<-` operator and any leading blanks). Returns the *unquoted*
+ * delimiter — the exact string a terminator line must equal — and the index
+ * just past the delimiter token.
+ *
+ * Quoting only controls whether the body is expanded, which is irrelevant to
+ * finding the substitution boundary, so `'EOF'`, `"EOF"`, and `\EOF` all yield
+ * the delimiter `EOF`.
+ */
+export declare function readHeredocDelimiter(value: string, pos: number): {
+    delim: string;
+    endPos: number;
+};
+/**
  * Parse a command substitution starting at the given position.
  * Handles $(...) syntax with proper depth tracking for nested substitutions.
  *

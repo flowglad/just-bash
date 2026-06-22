@@ -90,6 +90,20 @@ export declare function stdoutAsBytes(result: {
     stdoutEncoding?: "binary";
 }): ByteString;
 /**
+ * Normalize a command's stdout to decoded UTF-8 text, consulting its explicit
+ * `stdoutKind` (or legacy `stdoutEncoding`) rather than guessing from string
+ * contents. Byte-shaped output is UTF-8 decoded once (falling back to the raw
+ * latin1 view for non-UTF-8 bytes); text-shaped output is returned unchanged so
+ * it is never re-decoded. Used at the statement/script concatenation and
+ * command-substitution boundaries so interleaved text and byte producers
+ * combine into a single, consistently-decoded string.
+ */
+export declare function decodedTextFromResult(result: {
+    stdout: string;
+    stdoutKind?: OutputKind;
+    stdoutEncoding?: "binary";
+}): string;
+/**
  * Build an `ExecResult`-shaped object whose stdout is decoded text. Sets
  * `stdoutKind: "text"` so the pipe knows to UTF-8 encode it on handoff
  * and redirects know to write it as UTF-8. Use for command authors that

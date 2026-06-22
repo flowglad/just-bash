@@ -8,14 +8,54 @@ import { fromBuffer } from "../../fs/encoding.js";
 import { getErrorMessage } from "../../interpreter/helpers/errors.js";
 import { _Headers } from "../../security/trusted-globals.js";
 import { hasHelpFlag, showHelp } from "../help.js";
-import { generateMultipartBody } from "./form.js";
+import { encodeRfc3986, generateMultipartBody } from "./form.js";
 import { curlHelp } from "./help.js";
 import { parseOptions } from "./parse.js";
 import { applyWriteOut, extractFilename, formatHeaders, } from "./response-formatting.js";
 /**
- * Prepare request body from options, reading files if needed
+ * Resolve every `-d`/`--data*`/`--data-urlencode` part into a single payload,
+ * reading any `@file` references and joining the parts with `&` — matching
+ * real curl's concatenation of repeated data flags. Returns undefined when no
+ * data flags were given.
+ *
+ * Per-part `@file` handling mirrors real curl:
+ *   - ascii (`-d`/`--data` @file): strip CR and LF after reading.
+ *   - binary (`--data-binary` @file): send the bytes verbatim.
+ *   - urlencode (`--data-urlencode` @file/name@file): URL-encode the whole
+ *     file body as one value (so a `=` byte inside the file is percent-encoded
+ *     rather than treated as a name/value separator), with an optional
+ *     `name=` prefix.
  */
-async function prepareRequestBody(options, ctx) {
+async function resolveData(options, ctx) {
+    if (options.dataParts.length === 0)
+        return undefined;
+    const parts = [];
+    for (const part of options.dataParts) {
+        if (part.file) {
+            const filePath = ctx.fs.resolvePath(ctx.cwd, part.file.path);
+            const content = await ctx.fs.readFile(filePath);
+            if (part.file.mode === "ascii") {
+                parts.push(content.replace(/[\r\n]/g, ""));
+            }
+            else if (part.file.mode === "binary") {
+                parts.push(content);
+            }
+            else {
+                const encoded = encodeRfc3986(content);
+                parts.push(part.file.name ? `${part.file.name}=${encoded}` : encoded);
+            }
+        }
+        else {
+            parts.push(part.value ?? "");
+        }
+    }
+    return parts.join("&");
+}
+/**
+ * Prepare request body from options, reading files if needed. `resolvedData`
+ * is the already-joined `-d`/`--data*` payload (see resolveData).
+ */
+async function prepareRequestBody(options, ctx, resolvedData) {
     // Handle -T/--upload-file
     if (options.uploadFile) {
         const filePath = ctx.fs.resolvePath(ctx.cwd, options.uploadFile);
@@ -45,10 +85,12 @@ async function prepareRequestBody(options, ctx) {
             contentType: `multipart/form-data; boundary=${boundary}`,
         };
     }
-    // Handle -d/--data variants
-    if (options.data !== undefined && !options.getMode) {
+    // Handle -d/--data/--data-binary/--data-raw/--data-urlencode (inline +
+    // @file). In -G/--get mode the payload goes onto the URL query string
+    // instead of the body (handled by the caller), so emit no body here.
+    if (resolvedData !== undefined && !options.getMode) {
         return {
-            body: options.data,
+            body: resolvedData,
             contentType: "application/x-www-form-urlencoded",
         };
     }
@@ -173,12 +215,15 @@ export const curlCommand = {
         if (!url.match(/^https?:\/\//)) {
             url = `https://${url}`;
         }
-        if (options.getMode) {
-            url = appendDataToUrl(url, options.data);
-        }
         try {
+            // Resolve -d/--data* payloads (reading any @file references) once, then
+            // either append to the URL (-G/--get) or send as the body.
+            const resolvedData = await resolveData(options, ctx);
+            if (options.getMode) {
+                url = appendDataToUrl(url, resolvedData);
+            }
             // Prepare body and headers
-            const { body, contentType } = await prepareRequestBody(options, ctx);
+            const { body, contentType } = await prepareRequestBody(options, ctx, resolvedData);
             const headers = prepareHeaders(options, contentType);
             const result = await ctx.fetch(url, {
                 method: options.method,
@@ -216,7 +261,10 @@ export const curlCommand = {
                     });
                 }
             }
-            return { stdout: output, stderr: "", exitCode: 0 };
+            // The response body is a latin1-shaped byte buffer (see
+            // `fetchBodyToStdoutString`); any prepended headers / verbose markers are
+            // ASCII, so the whole stream is byte-shaped and must be marked "bytes".
+            return { stdout: output, stderr: "", exitCode: 0, stdoutKind: "bytes" };
         }
         catch (error) {
             const message = getErrorMessage(error);
