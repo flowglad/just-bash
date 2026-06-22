@@ -87,13 +87,20 @@ function getDatePartsInTimezone(
     ]);
     const weekdayStr = getValue("weekday");
 
+    // Use NaN-safe parsing so zero-valued fields (hour/minute/second = 0)
+    // don't incorrectly fall back to local time via the || operator.
+    const parseField = (val: string, fallback: number): number => {
+      const n = Number.parseInt(val, 10);
+      return Number.isNaN(n) ? fallback : n;
+    };
     return {
-      year: Number.parseInt(getValue("year"), 10) || date.getFullYear(),
-      month: Number.parseInt(getValue("month"), 10) || date.getMonth() + 1,
-      day: Number.parseInt(getValue("day"), 10) || date.getDate(),
-      hour: Number.parseInt(getValue("hour"), 10) || date.getHours(),
-      minute: Number.parseInt(getValue("minute"), 10) || date.getMinutes(),
-      second: Number.parseInt(getValue("second"), 10) || date.getSeconds(),
+      year: parseField(getValue("year"), date.getFullYear()),
+      month: parseField(getValue("month"), date.getMonth() + 1),
+      day: parseField(getValue("day"), date.getDate()),
+      // % 24 normalises the rare browser quirk of returning 24 for midnight
+      hour: parseField(getValue("hour"), date.getHours()) % 24,
+      minute: parseField(getValue("minute"), date.getMinutes()),
+      second: parseField(getValue("second"), date.getSeconds()),
       weekday: weekdayMap.get(weekdayStr) ?? date.getDay(),
     };
   } catch {
@@ -361,28 +368,22 @@ function getDayOfYearForParts(
 
 /**
  * Calculate week number from date parts.
+ * startDay: 0 = Sunday (%U), 1 = Monday (%W)
+ * Days before the first occurrence of startDay are week 00.
  */
 function getWeekNumberForParts(
   year: number,
   month: number,
   day: number,
-  weekday: number,
+  _weekday: number,
   startDay: number,
 ): number {
-  const dayOfYear = getDayOfYearForParts(year, month, day);
-  // Find day of week of Jan 1
-  const jan1 = new Date(year, 0, 1);
-  const jan1Weekday = jan1.getDay();
-
-  // Adjust for start day
-  const adjustedJan1 = (jan1Weekday - startDay + 7) % 7;
-  const adjustedWeekday = (weekday - startDay + 7) % 7;
-
-  // Days from start of first week
-  const daysIntoYear = dayOfYear - 1 + adjustedJan1;
-  const weekNum = Math.floor((daysIntoYear - adjustedWeekday + 7) / 7);
-
-  return weekNum;
+  const doy = getDayOfYearForParts(year, month, day);
+  const jan1dow = new Date(year, 0, 1).getDay(); // 0=Sun
+  // Day-of-year (1-based) of the first startDay on or after Jan 1
+  const firstWeekStart = 1 + ((7 + startDay - jan1dow) % 7);
+  const days = doy - firstWeekStart;
+  return days < 0 ? 0 : Math.floor(days / 7) + 1;
 }
 
 /**

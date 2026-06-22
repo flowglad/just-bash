@@ -242,6 +242,29 @@ function getAssocArrayNames(ctx: InterpreterContext): Set<string> {
   return ctx.state.associativeArrays ?? new Set<string>();
 }
 
+/**
+ * Format the `set -o` listing (one option per line, "<name>  on|off").
+ */
+function formatOptionsList(ctx: InterpreterContext): string {
+  const implementedOutput = DISPLAY_OPTIONS.map(
+    (opt) => `${opt.padEnd(16)}${ctx.state.options[opt] ? "on" : "off"}`,
+  );
+  const noopOutput = NOOP_DISPLAY_OPTIONS.map((opt) => `${opt.padEnd(16)}off`);
+  return `${[...implementedOutput, ...noopOutput].sort().join("\n")}\n`;
+}
+
+/**
+ * Format the `set +o` listing (the `set -o <name>` / `set +o <name>`
+ * commands needed to recreate the current option settings).
+ */
+function formatOptionsResetCommands(ctx: InterpreterContext): string {
+  const implementedOutput = DISPLAY_OPTIONS.map(
+    (opt) => `set ${ctx.state.options[opt] ? "-o" : "+o"} ${opt}`,
+  );
+  const noopOutput = NOOP_DISPLAY_OPTIONS.map((opt) => `set +o ${opt}`);
+  return `${[...implementedOutput, ...noopOutput].sort().join("\n")}\n`;
+}
+
 export function handleSet(ctx: InterpreterContext, args: string[]): ExecResult {
   if (args.includes("--help")) {
     return success(SET_USAGE);
@@ -346,6 +369,14 @@ export function handleSet(ctx: InterpreterContext, args: string[]): ExecResult {
     return success(lines.length > 0 ? `${lines.join("\n")}\n` : "");
   }
 
+  // Listings emitted by a no-option-name `o` bundled in a short-flag cluster
+  // (e.g. `set -oe`). bash prints the option listing but keeps applying the
+  // rest of the flags, so the output is deferred and flushed once all flags
+  // and tokens have been processed.
+  const pendingListings: string[] = [];
+  const finish = (): ExecResult =>
+    pendingListings.length > 0 ? success(pendingListings.join("")) : OK;
+
   let i = 0;
   while (i < args.length) {
     const arg = args[i];
@@ -366,37 +397,80 @@ export function handleSet(ctx: InterpreterContext, args: string[]): ExecResult {
       continue;
     }
 
-    // Handle -o alone (print current settings)
+    // Handle -o with no option name (print current settings). Like the
+    // bundled form, bash prints the listing but keeps processing any following
+    // tokens — e.g. `set -o -x` lists options and then enables xtrace — so the
+    // listing is deferred and flushed at the end rather than returned here.
     if (arg === "-o") {
-      const implementedOutput = DISPLAY_OPTIONS.map(
-        (opt) => `${opt.padEnd(16)}${ctx.state.options[opt] ? "on" : "off"}`,
-      );
-      const noopOutput = NOOP_DISPLAY_OPTIONS.map(
-        (opt) => `${opt.padEnd(16)}off`,
-      );
-      const allOptions = [...implementedOutput, ...noopOutput].sort();
-      return success(`${allOptions.join("\n")}\n`);
+      pendingListings.push(formatOptionsList(ctx));
+      i++;
+      continue;
     }
 
-    // Handle +o alone (print commands to recreate settings)
+    // Handle +o with no option name (print commands to recreate settings).
     if (arg === "+o") {
-      const implementedOutput = DISPLAY_OPTIONS.map(
-        (opt) => `set ${ctx.state.options[opt] ? "-o" : "+o"} ${opt}`,
-      );
-      const noopOutput = NOOP_DISPLAY_OPTIONS.map((opt) => `set +o ${opt}`);
-      const allOptions = [...implementedOutput, ...noopOutput].sort();
-      return success(`${allOptions.join("\n")}\n`);
+      pendingListings.push(formatOptionsResetCommands(ctx));
+      i++;
+      continue;
     }
 
-    // Handle combined short flags like -eu or +eu
+    // Handle combined short flags like -eu or +eu, including a bundled
+    // -o/+o long option (e.g. `set -euo pipefail`). In bash, an `o` inside
+    // a cluster consumes the *next word* as its long-option name — so
+    // `set -euo pipefail` is equivalent to `set -e -u -o pipefail`, and the
+    // remaining characters of the token keep being parsed as short flags
+    // (`set -oe pipefail` sets both pipefail and errexit). Multiple `o`s
+    // consume successive words. The option name must be a non-option word: a
+    // following `-`/`+`-prefixed token (e.g. `set -o -x`) is NOT consumed as
+    // the name — bash then treats it as the "no name available" case. In that
+    // case the `o` prints the current option settings (like a standalone
+    // `-o`/`+o`) but does NOT stop flag processing — the remaining flags are
+    // still applied, so `set -oe` (no name) enables errexit and lists options,
+    // and `set -o -x` lists options and then enables xtrace.
     if (
       arg.length > 1 &&
       (arg[0] === "-" || arg[0] === "+") &&
       arg[1] !== "-"
     ) {
       const enable = arg[0] === "-";
+      // Number of following words already consumed as -o/+o option names.
+      let consumedArgs = 0;
       for (let j = 1; j < arg.length; j++) {
         const flag = arg[j];
+
+        // `o` takes its option name from the next word, not from the
+        // remaining characters of the current token.
+        if (flag === "o") {
+          const valueIndex = i + 1 + consumedArgs;
+          const hasOptionName =
+            valueIndex < args.length &&
+            !args[valueIndex].startsWith("-") &&
+            !args[valueIndex].startsWith("+");
+          if (hasOptionName) {
+            const optName = args[valueIndex];
+            if (!LONG_OPTION_MAP.has(optName)) {
+              const errorMsg = `bash: set: ${optName}: invalid option name\n${SET_USAGE}`;
+              // In POSIX mode, invalid option is fatal
+              if (ctx.state.options.posix) {
+                throw new PosixFatalError(1, "", errorMsg);
+              }
+              return failure(errorMsg);
+            }
+            setShellOption(ctx, LONG_OPTION_MAP.get(optName) ?? null, enable);
+            consumedArgs++;
+            continue;
+          }
+          // No option name available: like a standalone `-o`/`+o`, bash prints
+          // the option listing — a snapshot of the state *so far*, hence
+          // computed here before later flags in the cluster are applied — but
+          // it keeps processing the remaining flags, so e.g. `set -oe` still
+          // enables errexit. The listing is deferred and flushed at the end.
+          pendingListings.push(
+            enable ? formatOptionsList(ctx) : formatOptionsResetCommands(ctx),
+          );
+          continue;
+        }
+
         if (!SHORT_OPTION_MAP.has(flag)) {
           const errorMsg = `bash: set: ${arg[0]}${flag}: invalid option\n${SET_USAGE}`;
           // In POSIX mode, invalid option is fatal
@@ -407,14 +481,14 @@ export function handleSet(ctx: InterpreterContext, args: string[]): ExecResult {
         }
         setShellOption(ctx, SHORT_OPTION_MAP.get(flag) ?? null, enable);
       }
-      i++;
+      i += 1 + consumedArgs;
       continue;
     }
 
     // Handle -- (end of options)
     if (arg === "--") {
       setPositionalParameters(ctx, args.slice(i + 1));
-      return OK;
+      return finish();
     }
 
     // Handle - (disable xtrace and verbose, end of options)
@@ -424,7 +498,7 @@ export function handleSet(ctx: InterpreterContext, args: string[]): ExecResult {
       updateShellopts(ctx);
       if (i + 1 < args.length) {
         setPositionalParameters(ctx, args.slice(i + 1));
-        return OK;
+        return finish();
       }
       i++;
       continue;
@@ -448,10 +522,10 @@ export function handleSet(ctx: InterpreterContext, args: string[]): ExecResult {
 
     // Non-option arguments are positional parameters
     setPositionalParameters(ctx, args.slice(i));
-    return OK;
+    return finish();
   }
 
-  return OK;
+  return finish();
 }
 
 /**

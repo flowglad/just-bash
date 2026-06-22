@@ -9,8 +9,25 @@ export interface FormField {
   contentType?: string;
 }
 
+<<<<<<< HEAD
 export interface DataPart {
   value: string;
+=======
+export interface UrlencodeFile {
+  /** Optional field name; emits `name=` prefix before the encoded file contents. */
+  name?: string;
+  /** Path to read; resolved against ctx.cwd at execute time. */
+  path: string;
+}
+
+export interface DataFile {
+  /**
+   * `ascii` matches `-d`/`--data` semantics: CR and LF are stripped after
+   * reading. `binary` matches `--data-binary`: file bytes are sent verbatim.
+   */
+  mode: "ascii" | "binary";
+  path: string;
+>>>>>>> @just-bash/executor@1.0.3
 }
 
 export interface CurlOptions {
@@ -19,7 +36,25 @@ export interface CurlOptions {
   data?: string;
   dataParts: DataPart[];
   dataBinary: boolean;
+<<<<<<< HEAD
   getMode: boolean;
+=======
+  /**
+   * File backing the `data` payload when `-d`/`--data`/`--data-binary` was
+   * given as `@filename`. Mutually exclusive with `data` — whichever form
+   * appears last on the command line wins. This last-write-wins shape is
+   * the established just-bash behavior for `-d`/`--data*` inline values
+   * and intentionally differs from real curl, which combines repeated
+   * `-d` payloads with `&`. The `@file` work here preserves that scope.
+   */
+  dataFile?: DataFile;
+  /**
+   * `--data-urlencode @file` and `--data-urlencode name@file` accumulate
+   * here. Each entry is encoded at execute time and joined with `&`
+   * alongside any inline urlencode payload accumulated in `data`.
+   */
+  urlencodeFiles: UrlencodeFile[];
+>>>>>>> @just-bash/executor@1.0.3
   formFields: FormField[];
   user?: string;
   uploadFile?: string;
