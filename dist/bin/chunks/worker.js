@@ -714,8 +714,9 @@ var WorkerDefenseInDepth = class {
         }
       },
       set(target, prop, value, receiver) {
+        const setValue = () => path === "process.env" && prop === "DEBUG" ? Reflect.set(target, prop, value) : Reflect.set(target, prop, value, receiver);
         if (self.inTrap) {
-          return Reflect.set(target, prop, value, receiver);
+          return setValue();
         }
         self.inTrap = true;
         try {
@@ -729,7 +730,7 @@ var WorkerDefenseInDepth = class {
           if (!auditMode) {
             throw new WorkerSecurityViolationError(message, violation);
           }
-          return Reflect.set(target, prop, value, receiver);
+          return setValue();
         } finally {
           self.inTrap = false;
         }

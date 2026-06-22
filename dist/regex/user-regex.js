@@ -187,7 +187,7 @@ export class UserRegex {
         }
         // Global: return all matches without groups
         const matches = [];
-        const matcher = this._re2.matcher(input);
+        const matcher = this.acquireMatcher(input);
         let pos = 0;
         while (matcher.find(pos)) {
             const matchStr = matcher.group(0) ?? "";
@@ -213,14 +213,19 @@ export class UserRegex {
             this._lastIndex = 0;
         }
         if (typeof replacement === "string") {
-            const matcher = this._re2.matcher(input);
-            // Use perlMode=true for JavaScript-style replacement ($1, $2, etc.)
+            const matcher = this.acquireMatcher(input);
             if (this._global) {
                 return matcher.replaceAll(replacement, true);
             }
             return matcher.replaceFirst(replacement, true);
         }
-        // Callback replacement - we need to do this manually
+        // Callback replacement - we need to do this manually.
+        // Use a fresh Matcher rather than the shared cached one: the user-provided
+        // callback may re-enter this same UserRegex instance (e.g. call test/exec/
+        // replace), which would route through acquireMatcher and repoint the shared
+        // matcher's charSequence to a different input. The next matcher.find(pos)
+        // would then advance through the wrong string. A fresh matcher keeps the
+        // iteration state private to this replace() call.
         const result = [];
         const matcher = this._re2.matcher(input);
         let lastEnd = 0;
@@ -249,12 +254,16 @@ export class UserRegex {
                 }
                 args.push(groups);
             }
-            // Call replacement function
+            // Capture positions before invoking callback. The matcher is private to
+            // this call, but capturing now avoids relying on matcher state being
+            // unchanged across the callback boundary.
+            const matchStart = matcher.start(0);
+            const matchEnd = matcher.end(0);
             result.push(replacement(fullMatch, ...args));
-            lastEnd = matcher.end(0);
+            lastEnd = matchEnd;
             pos = lastEnd;
             // Handle zero-length matches
-            if (matcher.start(0) === matcher.end(0)) {
+            if (matchStart === matchEnd) {
                 pos++;
             }
             if (!this._global)
@@ -287,7 +296,7 @@ export class UserRegex {
      * Returns the index of the first match, or -1 if not found.
      */
     search(input) {
-        const matcher = this._re2.matcher(input);
+        const matcher = this.acquireMatcher(input);
         if (matcher.find()) {
             return matcher.start(0);
         }
@@ -301,6 +310,10 @@ export class UserRegex {
             throw new Error("matchAll requires global flag");
         }
         this._lastIndex = 0;
+        // matchAll is a generator that suspends at `yield`. The shared `_matcher`
+        // would be corrupted if a caller interleaves any other method on the same
+        // UserRegex instance between two `next()` calls (acquireMatcher would
+        // reset/repoint it). Use a fresh Matcher to keep iterator state private.
         const matcher = this._re2.matcher(input);
         const groupCount = this._re2.groupCount();
         const namedGroups = this._re2.namedGroups();

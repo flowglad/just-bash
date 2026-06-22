@@ -2,9 +2,11 @@
  * Form data handling for curl command
  */
 import type { FormField } from "./types.js";
+export declare function encodeRfc3986(value: string): string;
 /**
  * URL-encode form data in curl's --data-urlencode format
- * Supports: name=content, =content, content. File forms are rejected by parseOptions.
+ * Supports: name=content, =content, content. The `@file` / `name@file` forms
+ * are detected in parseOptions and deferred to execute time (see resolveData).
  */
 export declare function encodeFormData(input: string): string;
 /**

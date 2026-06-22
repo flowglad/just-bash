@@ -65,6 +65,7 @@ export function searchContent(content, regex, options = {}) {
             showByteOffset,
             replace,
             kResetGroup,
+            preFilter,
         });
     }
     const lines = content.split("\n");
@@ -351,7 +352,16 @@ export function searchContent(content, regex, options = {}) {
  * Patterns can match across line boundaries (e.g., 'foo\nbar')
  */
 function searchContentMultiline(content, regex, options) {
-    const { invertMatch, showLineNumbers, countOnly, countMatches, filename, onlyMatching, beforeContext, afterContext, maxCount, contextSeparator, showColumn, showByteOffset, replace, kResetGroup, } = options;
+    const { invertMatch, showLineNumbers, countOnly, countMatches, filename, onlyMatching, beforeContext, afterContext, maxCount, contextSeparator, showColumn, showByteOffset, replace, kResetGroup, preFilter, } = options;
+    // File-level preFilter: if no needle appears anywhere in the content, no line can match.
+    // Only safe when not inverting — an invert-match scan must check every line.
+    if (preFilter && !invertMatch && !preFilterMatches(preFilter, content)) {
+        if (countOnly || countMatches) {
+            const countStr = filename ? `${filename}:0` : "0";
+            return { output: `${countStr}\n`, matched: false, matchCount: 0 };
+        }
+        return { output: "", matched: false, matchCount: 0 };
+    }
     const lines = content.split("\n");
     const lineCount = lines.length;
     const lastIdx = lineCount > 0 && lines[lineCount - 1] === "" ? lineCount - 1 : lineCount;

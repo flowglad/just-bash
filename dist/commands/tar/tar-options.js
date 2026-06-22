@@ -2,7 +2,17 @@
  * Option parsing for tar command
  */
 import { unknownOption } from "../help.js";
-export function parseOptions(args) {
+export function parseOptions(rawArgs) {
+    // GNU old-style: bare first arg is a flag bundle. Value-taking letters
+    // (f, C, T, X) must be terminal or they swallow the rest as their value;
+    // move them to the end.
+    const valueTaking = /[fCTX]/g;
+    const args = rawArgs.length > 0 && rawArgs[0] !== "" && !rawArgs[0].startsWith("-")
+        ? [
+            `-${rawArgs[0].replace(valueTaking, "") + (rawArgs[0].match(valueTaking) ?? []).join("")}`,
+            ...rawArgs.slice(1),
+        ]
+        : rawArgs;
     const options = {
         create: false,
         append: false,

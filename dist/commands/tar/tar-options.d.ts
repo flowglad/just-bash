@@ -27,7 +27,7 @@ export interface TarOptions {
     excludeFrom: string;
     wildcards: boolean;
 }
-export declare function parseOptions(args: string[]): {
+export declare function parseOptions(rawArgs: string[]): {
     ok: true;
     options: TarOptions;
     files: string[];

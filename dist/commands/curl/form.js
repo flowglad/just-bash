@@ -1,12 +1,13 @@
 /**
  * Form data handling for curl command
  */
-function encodeRfc3986(value) {
+export function encodeRfc3986(value) {
     return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 /**
  * URL-encode form data in curl's --data-urlencode format
- * Supports: name=content, =content, content. File forms are rejected by parseOptions.
+ * Supports: name=content, =content, content. The `@file` / `name@file` forms
+ * are detected in parseOptions and deferred to execute time (see resolveData).
  */
 export function encodeFormData(input) {
     // Check for name=value format
