@@ -152,6 +152,48 @@ if (!skipValidation) {
     "src/commands/python3/python3.optin.test.ts",
   ]);
 
+  // dist/ is gitignored but its built artifacts are tracked, and the package
+  // tag is cut from committed history (git subtree split, below). A rebuild
+  // emits content-hashed chunk files (dist/bundle/chunks, dist/bin/chunks)
+  // whose names change with content; brand-new chunks are untracked AND
+  // ignored, so `git status` hides them even though the tracked entrypoints
+  // (dist/bundle/index.js, dist/bin/*) now reference them. Left uncommitted,
+  // the cut package resolves to chunks that were never committed and the
+  // consumability smoke test fails with "Cannot find module ./chunks/...".
+  //
+  // Force-add dist so new/changed/deleted chunks become visible, then commit
+  // any drift so the subtree split and the pushed branch carry a
+  // self-consistent bundle. `-c core.fileMode=false` keeps Linux/macOS
+  // executable-bit flips on dist/bin/*.js out of the diff. The [skip auto-tag]
+  // marker stops this build commit from re-triggering the workflow.
+  run("git", [
+    "-c",
+    "core.fileMode=false",
+    "add",
+    "-f",
+    "--",
+    `${packageDir}/dist`,
+  ]);
+  const distDrift = run(
+    "git",
+    ["-c", "core.fileMode=false", "diff", "--cached", "--name-only"],
+    { capture: true },
+  );
+  if (distDrift) {
+    run("git", [
+      "-c",
+      "core.fileMode=false",
+      "commit",
+      "-m",
+      "build: sync committed dist for flowglad package tag [skip auto-tag]",
+    ]);
+    console.log(
+      `Synced committed dist (${distDrift.split("\n").length} file(s)) before tagging.`,
+    );
+  }
+
+  // Anything still dirty is drift outside dist/ (source, tests, lockfile) that
+  // a build must not have produced — surface it rather than tag silently.
   const postValidationStatus = run(
     "git",
     ["-c", "core.fileMode=false", "status", "--porcelain"],
@@ -159,7 +201,7 @@ if (!skipValidation) {
   );
   if (postValidationStatus) {
     throw new Error(
-      `Validation changed files. Commit the build output first, then rerun:\n${postValidationStatus}`,
+      `Validation changed files outside dist/. Commit them first, then rerun:\n${postValidationStatus}`,
     );
   }
 }

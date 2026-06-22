@@ -28,6 +28,15 @@ root. A plain `git tag` on `flowglad-main` is not consumable by Bun.
    git commit -m "sync: upstream <sha>"
    ```
 
+   The `git add -f` is needed because `packages/just-bash/dist` is gitignored
+   while its built artifacts are tracked. If you forget it (or miss a
+   newly content-hashed `dist/bundle/chunks/*` file), the release tooling is a
+   safety net: `create-flowglad-package-tag.mjs` rebuilds, force-adds `dist`,
+   and commits any drift as `build: sync committed dist … [skip auto-tag]`
+   before cutting the tag — so the package never resolves to an uncommitted
+   chunk. Committing dist yourself still keeps `flowglad-main` self-consistent
+   between releases.
+
 2. Push.
 
    ```bash
