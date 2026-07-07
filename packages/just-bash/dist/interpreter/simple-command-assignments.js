@@ -11,7 +11,7 @@ import { Parser } from "../parser/parser.js";
 import { evaluateArithmetic } from "./arithmetic.js";
 import { applyCaseTransform, getLocalVarDepth, isInteger, } from "./builtins/index.js";
 import { ArithmeticError, ExitError } from "./errors.js";
-import { expandWord, expandWordWithGlob, getArrayElements, } from "./expansion.js";
+import { expandWord, expandWordWithGlob, getArrayElements, isArray, } from "./expansion.js";
 import { parseKeyedElementFromWord, wordToLiteralString, } from "./helpers/array.js";
 import { getNamerefTarget, isNameref, resolveNameref, resolveNamerefForAssignment, } from "./helpers/nameref.js";
 import { checkReadonlyError, isReadonly } from "./helpers/readonly.js";
@@ -565,7 +565,6 @@ async function processScalarAssignment(ctx, node, name, value, append, tempAssig
         }
     }
     else {
-        const { isArray } = await import("./expansion.js");
         const appendKey = isArray(ctx, targetName) ? `${targetName}_0` : targetName;
         finalValue = append ? (ctx.state.env.get(appendKey) || "") + value : value;
     }
@@ -577,7 +576,6 @@ async function processScalarAssignment(ctx, node, name, value, append, tempAssig
         actualEnvKey = await computeNamerefArrayEnvKey(ctx, namerefArrayRef);
     }
     else {
-        const { isArray } = await import("./expansion.js");
         if (isArray(ctx, targetName)) {
             actualEnvKey = `${targetName}_0`;
         }
