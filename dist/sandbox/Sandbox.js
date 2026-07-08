@@ -28,6 +28,15 @@ export class Sandbox {
             maxLoopIterations: opts?.maxLoopIterations,
             network: opts?.network,
             defenseInDepth: opts?.defenseInDepth,
+            // Capability flags: forwarded so a sandbox created via Sandbox.create
+            // can opt into the same optional features as `new Bash(...)`. Each is
+            // `undefined` when the caller omits it, falling back to the BashOptions
+            // default, so existing behavior is unchanged.
+            python: opts?.python,
+            javascript: opts?.javascript,
+            commands: opts?.commands,
+            customCommands: opts?.customCommands,
+            fetch: opts?.fetch,
         });
         return new Sandbox(bashEnv, opts?.timeoutMs);
     }
