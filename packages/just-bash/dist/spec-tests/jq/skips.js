@@ -139,10 +139,6 @@ const SKIP_TESTS = new Map([
     // ============================================================
     // String interpolation edge cases
     // ============================================================
-    [
-        'jq.test:"inter\\("pol" + "ation")"',
-        "String interpolation with complex expression",
-    ],
     ['jq.test:@html "<b>\\(.)</b>"', "String interpolation in @html"],
     ['jq.test:{"a",b,"a$\\(1+1)"}', "String interpolation in object key"],
     // ============================================================
@@ -425,7 +421,6 @@ const SKIP_PATTERNS = [
     { pattern: /"\\u0000.*" \+ \./, reason: "NUL character string concat" },
     { pattern: /contains\("b\\u0000/, reason: "contains with NUL char" },
     // String interpolation edge cases
-    { pattern: /inter\\\(/, reason: "String interpolation with backslash" },
     {
         pattern: /\{"[^"]*",\w+,"[^"]*\$\\/,
         reason: "Object shorthand with interpolation",
