@@ -640,7 +640,24 @@ ${envSetup}
 sys.argv = [${argvList}]
 
 # Path redirection: redirect /absolute paths to /host mount
+def _user_supplied_internal_alias():
+    frame = sys._getframe(2)
+    while frame is not None:
+        name = frame.f_code.co_name
+        if (name.startswith('_redir_') or
+                name.startswith('_path_') or
+                name == '_redirect_path'):
+            frame = frame.f_back
+            continue
+        return frame.f_code.co_filename == '/tmp/_jb_script.py'
+    return False
+
 def _should_redirect(path):
+    if (isinstance(path, str) and
+            (path == '/host' or path.startswith('/host/')) and
+            _user_supplied_internal_alias()):
+        canonical = path[5:] or '/'
+        raise OSError(f"internal path alias '{path}' is not supported; use '{canonical}'")
     return (isinstance(path, str) and
             path.startswith('/') and
             not path.startswith('/lib') and
@@ -924,7 +941,7 @@ def _path_rglob(self, pattern):
 Path.rglob = _path_rglob
 
 # Set cwd to host mount
-os.chdir('/host' + ${JSON.stringify(input.cwd)})
+_orig_chdir('/host' + ${JSON.stringify(input.cwd)})
 `;
 }
 
@@ -1436,6 +1453,12 @@ function activateDefense(protocolToken: string): void {
 
   defense = new WorkerDefenseInDepth({
     excludeViolationTypes: [
+      // CPython's Emscripten glue accesses the already-instantiated WASM
+      // module while finalizing. Python has no JS bridge, and this build has
+      // dynamic linking disabled, so user code cannot use this exclusion to
+      // compile or load arbitrary WASM. Keep the crafted side-module security
+      // regression in python3.security.test.ts as the enforcement boundary.
+      "webassembly",
       // SharedArrayBuffer/Atomics: Used by sync-fs-backend.ts for synchronous
       // filesystem communication between the WASM thread and the main thread.
       "shared_array_buffer",
