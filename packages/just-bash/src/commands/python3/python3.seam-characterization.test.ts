@@ -55,24 +55,54 @@ describe("reasoning execution seam characterization", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it("keeps the internal /host mount visible only inside wasm python", async () => {
+  it("rejects the internal /host mount with the canonical script path", async () => {
     const env = new Bash({
       python: true,
-      files: { "/workspace/value.txt": "mounted-value\n" },
+      files: { "/workspace/value.py": 'print("mounted-value")\n' },
     });
 
-    const shellResult = await env.exec("cat /host/workspace/value.txt");
-    const pythonResult = await env.exec(
-      `python3 -c "print(open('/host/workspace/value.txt').read(), end='')"`,
+    const result = await env.exec("python3 /host/workspace/value.py");
+
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "python3: internal path alias '/host/workspace/value.py' is not supported; use '/workspace/value.py'\n",
+    );
+    expect(result.exitCode).toBe(2);
+  });
+
+  it("rejects the internal /host mount from high-level Python file APIs", async () => {
+    const env = new Bash({
+      python: true,
+      files: {
+        "/workspace/value.txt": "mounted-value\n",
+        "/workspace/host_alias.py": `import sys
+try:
+    open('/host/workspace/value.txt').read()
+except OSError as error:
+    print(error, file=sys.stderr)
+    sys.exit(2)
+`,
+      },
+    });
+
+    const result = await env.exec("python3 /workspace/host_alias.py");
+
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "internal path alias '/host/workspace/value.txt' is not supported; use '/workspace/value.txt'\n",
+    );
+    expect(result.exitCode).toBe(2);
+  });
+
+  it("preserves explicit Python exit status and stderr without teardown noise", async () => {
+    const env = new Bash({ python: true });
+
+    const result = await env.exec(
+      `python3 -c "import sys; print('real error', file=sys.stderr); sys.exit(3)"`,
     );
 
-    expect(shellResult.stdout).toBe("");
-    expect(shellResult.stderr).toBe(
-      "cat: /host/workspace/value.txt: No such file or directory\n",
-    );
-    expect(shellResult.exitCode).toBe(1);
-    expect(pythonResult.stdout).toBe("mounted-value\n");
-    expect(pythonResult.stderr).toBe("");
-    expect(pythonResult.exitCode).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("real error\n");
+    expect(result.exitCode).toBe(3);
   });
 });
