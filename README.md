@@ -3,16 +3,12 @@
 > ## Flowglad fork notes
 >
 > This is [Flowglad](https://github.com/flowglad)'s fork of [`vercel-labs/just-bash`](https://github.com/vercel-labs/just-bash).
-> We carry one patch that fixes an issue encountered while embedding just-bash
-> in our reasoning agent. The patch lives at TypeScript-source level on the
-> `flowglad-main` branch (this repo's default) and is reflected in the
-> committed `dist/`. Consumers must pin a package-root tag named
+> We currently carry no Flowglad-specific Python or SQLite source patches.
+> The former `sqlite3-dot-commands`, SQLite Bun structured-clone workaround,
+> and Python execution-seam hardening patches have been backed out. Consumers
+> must pin a package-root tag named
 > `v<upstream>-fgp.<n>` (for example, `v2.14.3-fgp.1`), not the branch and not a
 > monorepo-root tag.
->
-> | Patch | What it fixes | Upstream PR |
-> | --- | --- | --- |
-> | `sqlite3-dot-commands` | sql.js doesn't implement sqlite3's CLI dot-commands (`.tables`, `.schema`, `.mode`, `.read`, `.separator`, `.quit`, etc.), so agent scripts pasted from real `sqlite3` sessions hit syntax errors. We carry a preprocessor (`commands/sqlite3/dot-commands.ts`) that translates each dot-command to equivalent SQL, formatter-state mutations, recursive `.read` inlining, or actionable in-band error messages before handing the script to the worker. (The original `sqlite3-worker` bundling bug was upstreamed in [vercel-labs#190](https://github.com/vercel-labs/just-bash/pull/190).) | [vercel-labs#249](https://github.com/vercel-labs/just-bash/pull/249) |
 >
 > The `awk-comma-continuation` patch (upstreamed in [vercel-labs#206](https://github.com/vercel-labs/just-bash/pull/206)) and the `jq-permissive-control-chars` patch (upstreamed in [vercel-labs#214](https://github.com/vercel-labs/just-bash/pull/214)) have been retired — those issues are fixed in upstream and our source matches it byte-for-byte.
 >

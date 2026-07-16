@@ -557,18 +557,6 @@ export const python3Command: Command = {
       pythonCode = decodeBytesToUtf8(ctx.stdin);
       scriptPath = "-";
     } else if (parsed.scriptFile !== null) {
-      if (
-        parsed.scriptFile === "/host" ||
-        parsed.scriptFile.startsWith("/host/")
-      ) {
-        const canonicalPath = parsed.scriptFile.slice(5) || "/";
-        return {
-          stdout: "",
-          stderr: `python3: internal path alias '${parsed.scriptFile}' is not supported; use '${canonicalPath}'\n`,
-          exitCode: 2,
-        };
-      }
-
       const filePath = ctx.fs.resolvePath(ctx.cwd, parsed.scriptFile);
 
       if (!(await ctx.fs.exists(filePath))) {
