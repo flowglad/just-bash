@@ -1,7 +1,9 @@
 import type { Writable } from "node:stream";
-import { Bash } from "../Bash.js";
+import { Bash, type JavaScriptConfig } from "../Bash.js";
+import type { CommandName } from "../commands/registry.js";
+import type { CustomCommand } from "../custom-commands.js";
 import type { IFileSystem } from "../fs/interface.js";
-import type { NetworkConfig } from "../network/index.js";
+import type { NetworkConfig, SecureFetch } from "../network/index.js";
 import type { DefenseInDepthConfig } from "../security/types.js";
 import type { CommandFinished } from "./Command.js";
 import { Command } from "./Command.js";
@@ -33,6 +35,35 @@ export interface SandboxOptions {
      * Monkey-patches dangerous JavaScript globals during bash execution.
      */
     defenseInDepth?: DefenseInDepthConfig | boolean;
+    /**
+     * Enable the python3/python commands. Disabled by default: Python adds
+     * security surface (arbitrary code execution via CPython). Forwarded to
+     * the underlying `Bash`.
+     */
+    python?: boolean;
+    /**
+     * Enable the js-exec command (sandboxed JavaScript via QuickJS). Accepts a
+     * boolean or a {@link JavaScriptConfig} (bootstrap code / `invokeTool`
+     * hook). Disabled by default. Forwarded to the underlying `Bash`.
+     */
+    javascript?: boolean | JavaScriptConfig;
+    /**
+     * Restrict the registered command set. When omitted, all built-in commands
+     * are available; pass a list to allow only those. Forwarded to the
+     * underlying `Bash`.
+     */
+    commands?: CommandName[];
+    /**
+     * Custom commands registered alongside the built-ins (these take precedence
+     * over built-ins with the same name). Forwarded to the underlying `Bash`.
+     */
+    customCommands?: CustomCommand[];
+    /**
+     * Custom secure fetch implementation used instead of one derived from
+     * `network`. Providing either `fetch` or `network` registers the network
+     * commands (curl, wget). Forwarded to the underlying `Bash`.
+     */
+    fetch?: SecureFetch;
 }
 export interface RunCommandParams {
     cmd: string;

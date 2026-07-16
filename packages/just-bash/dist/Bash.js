@@ -549,8 +549,51 @@ export class Bash {
     }
 }
 /**
- * Normalize a script by stripping leading whitespace from lines,
- * while preserving whitespace inside heredoc content.
+ * Track open single/double-quote state across one physical line, starting from
+ * `start` (the state carried over from the previous line). Used by
+ * normalizeScript to know whether a line begins inside a multi-line quoted
+ * string, where leading whitespace is literal and must not be trimmed.
+ *
+ * Only single and double quotes matter: those are the contexts where leading
+ * whitespace is significant. Backslash escapes and `#` comments are honored so
+ * a quote inside a comment (e.g. `# don't`) doesn't desync the state.
+ */
+function scanLineQuoteState(line, start) {
+    let state = start;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (state === "single") {
+            // Inside single quotes only a closing quote is special (no escapes).
+            if (ch === "'")
+                state = "none";
+        }
+        else if (state === "double") {
+            if (ch === "\\") {
+                i++; // backslash escapes the next char inside double quotes
+            }
+            else if (ch === '"') {
+                state = "none";
+            }
+        }
+        else if (ch === "'") {
+            state = "single";
+        }
+        else if (ch === '"') {
+            state = "double";
+        }
+        else if (ch === "\\") {
+            i++; // backslash escapes the next char (e.g. \" or \')
+        }
+        else if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
+            break; // start of a comment: the rest of the line is not shell-significant
+        }
+    }
+    return state;
+}
+/**
+ * Normalize a script by stripping leading whitespace from lines, while
+ * preserving whitespace inside heredoc content and inside multi-line quoted
+ * strings.
  *
  * This allows writing indented bash scripts in template literals:
  * ```
@@ -561,6 +604,11 @@ export class Bash {
  * `);
  * ```
  *
+ * Leading whitespace is only stripped from lines that begin outside any quote.
+ * A line that begins inside an unterminated single- or double-quoted string is
+ * literal quoted content (e.g. the body of `python3 -c "..."`), so it is kept
+ * verbatim.
+ *
  * Heredocs are detected by looking for << or <<- operators and their delimiters.
  */
 function normalizeScript(script) {
@@ -568,6 +616,9 @@ function normalizeScript(script) {
     const result = [];
     // Stack of pending heredoc delimiters (for nested heredocs)
     const pendingDelimiters = [];
+    // Open single/double-quote state carried across lines. When a line begins
+    // inside an open quote, its leading whitespace is literal and preserved.
+    let quoteState = "none";
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         // If we're inside a heredoc, check if this line ends it
@@ -586,9 +637,18 @@ function normalizeScript(script) {
             result.push(line);
             continue;
         }
-        // Not inside a heredoc - normalize the line and check for heredoc starts
-        const normalizedLine = line.trimStart();
+        // Not inside a heredoc. Lines that begin inside an open quote are literal
+        // quoted content (leading whitespace is significant), so preserve them
+        // verbatim; otherwise strip leading indentation.
+        const startState = quoteState;
+        const normalizedLine = startState === "none" ? line.trimStart() : line;
         result.push(normalizedLine);
+        quoteState = scanLineQuoteState(line, startState);
+        // Only detect heredoc operators on lines that begin outside any quote;
+        // a `<<WORD` inside quoted content is not a heredoc.
+        if (startState !== "none") {
+            continue;
+        }
         // Check for heredoc operators in this line
         // Match: <<DELIM, <<-DELIM, << 'DELIM', <<- "DELIM", etc.
         // Multiple heredocs on one line are possible: cmd <<EOF1 <<EOF2
