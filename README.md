@@ -3,7 +3,14 @@
 > ## Flowglad fork notes
 >
 > This is [Flowglad](https://github.com/flowglad)'s fork of [`vercel-labs/just-bash`](https://github.com/vercel-labs/just-bash).
-> We currently carry no Flowglad-specific Python or SQLite source patches.
+> We currently carry two Flowglad-specific runtime patches, neither of which
+> changes Python or SQLite:
+>
+> | Patch | Why it remains |
+> | --- | --- |
+> | `curl-get-data` | Adds `-G`/`--get`, ordered accumulation across repeated data flags, RFC 3986 encoding, and the standard form content type. Upstream now supplies the underlying `@file` handling. |
+> | `dual-stack-dns-pin` | Keeps every public address validated during DNS preflight and selects a pinned address matching the family requested at connect time. Upstream still pins only the first address, which can reject a valid dual-stack host. |
+>
 > The former `sqlite3-dot-commands`, SQLite Bun structured-clone workaround,
 > and Python execution-seam hardening patches have been backed out. Consumers
 > must pin a package-root tag named
@@ -11,6 +18,8 @@
 > monorepo-root tag.
 >
 > The `awk-comma-continuation` patch (upstreamed in [vercel-labs#206](https://github.com/vercel-labs/just-bash/pull/206)) and the `jq-permissive-control-chars` patch (upstreamed in [vercel-labs#214](https://github.com/vercel-labs/just-bash/pull/214)) have been retired — those issues are fixed in upstream and our source matches it byte-for-byte.
+> The former package export-map carry has also been retired: upstream's map now
+> supports Bun/Node ESM, Node CommonJS, and automatic browser resolution.
 >
 > ### Releasing
 >
