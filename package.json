@@ -15,38 +15,19 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "node": {
-        "import": {
-          "types": "./dist/index.d.ts",
-          "default": "./dist/bundle/index.js"
-        },
-        "require": {
-          "types": "./dist/index.d.cts",
-          "default": "./dist/bundle/index.cjs"
-        }
+      "browser": "./dist/bundle/browser.js",
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/bundle/index.cjs"
       },
       "import": {
         "types": "./dist/index.d.ts",
         "default": "./dist/bundle/index.js"
-      },
-      "require": {
-        "types": "./dist/index.d.cts",
-        "default": "./dist/bundle/index.cjs"
-      },
-      "default": "./dist/bundle/index.js"
+      }
     },
     "./browser": {
       "types": "./dist/browser.d.ts",
-      "import": "./dist/bundle/browser.js",
-      "default": "./dist/bundle/browser.js"
-    },
-    "./node": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/bundle/index.js",
-      "require": {
-        "types": "./dist/index.d.cts",
-        "default": "./dist/bundle/index.cjs"
-      }
+      "import": "./dist/bundle/browser.js"
     }
   },
   "files": [
@@ -55,8 +36,8 @@
     "dist/*.d.ts",
     "dist/*.d.cts",
     "dist/ast/*.d.ts",
-    "dist/commands/sqlite3/worker.js",
     "dist/commands/**/*.d.ts",
+    "dist/commands/sqlite3/worker.js",
     "dist/fs/**/*.d.ts",
     "dist/interpreter/**/*.d.ts",
     "dist/network/**/*.d.ts",
