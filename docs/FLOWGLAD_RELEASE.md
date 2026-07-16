@@ -80,8 +80,8 @@ The script validates that:
 - `python.wasm` is hydrated, not an LFS pointer;
 - the package builds, typechecks, and passes focused sqlite/Python tests;
 - the package-root tag contains the hydrated WASM blob;
-- a clean Bun install can import `just-bash` and run Python, sqlite dot
-  commands, jq control-character input, and awk comma-newline continuation.
+- a clean Bun install can import `just-bash` and run Python, jq
+  control-character input, and awk comma-newline continuation.
 
 ## Local Dry Run
 

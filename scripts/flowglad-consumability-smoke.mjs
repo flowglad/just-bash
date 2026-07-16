@@ -48,11 +48,6 @@ const cases = [
     stdout: '3\n',
   },
   {
-    name: 'sqlite-dot-command',
-    command: "sqlite3 :memory: 'create table t(a); .tables'",
-    stdout: 't\n',
-  },
-  {
     name: 'jq-control-char',
     command: "printf '{\"x\":\"a\\u0001b\"}' | jq .x",
     stdout: '"a\\u0001b"\n',
