@@ -4,11 +4,19 @@
 
 import type { FormField } from "./types.js";
 
+<<<<<<< HEAD
 export function encodeRfc3986(value: string): string {
   return encodeURIComponent(value).replace(
     /[!'()*]/g,
     (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
   );
+=======
+export function encodeCurlData(value: string): string {
+  return encodeURIComponent(value)
+    .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16)}`)
+    .replace(/%20/g, "+")
+    .replace(/%[0-9A-F]{2}/g, (percentEscape) => percentEscape.toLowerCase());
+>>>>>>> @just-bash/executor@3.0.0
 }
 
 /**
@@ -22,10 +30,18 @@ export function encodeFormData(input: string): string {
   if (eqIndex >= 0) {
     const name = input.slice(0, eqIndex);
     const value = input.slice(eqIndex + 1);
+<<<<<<< HEAD
     return `${name}=${encodeRfc3986(value)}`;
   }
   // Plain value
   return encodeRfc3986(input);
+=======
+    const encoded = encodeCurlData(value);
+    return name ? `${name}=${encoded}` : encoded;
+  }
+  // Plain value
+  return encodeCurlData(input);
+>>>>>>> @just-bash/executor@3.0.0
 }
 
 /**

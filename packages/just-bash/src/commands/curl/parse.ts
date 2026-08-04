@@ -92,16 +92,20 @@ export function parseOptions(args: string[]): CurlOptions | ExecResult {
   };
 
   let impliesPost = false;
+  let explicitMethod = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
     if (arg === "-X" || arg === "--request") {
       options.method = args[++i] ?? "GET";
+      explicitMethod = true;
     } else if (arg.startsWith("-X")) {
       options.method = arg.slice(2);
+      explicitMethod = true;
     } else if (arg.startsWith("--request=")) {
       options.method = arg.slice(10);
+      explicitMethod = true;
     } else if (arg === "-H" || arg === "--header") {
       const header = args[++i];
       if (header) {
@@ -122,7 +126,11 @@ export function parseOptions(args: string[]): CurlOptions | ExecResult {
       }
     } else if (arg === "-G" || arg === "--get") {
       options.getMode = true;
+<<<<<<< HEAD
       options.method = "GET";
+=======
+      if (!explicitMethod) options.method = "GET";
+>>>>>>> @just-bash/executor@3.0.0
     } else if (arg === "-d" || arg === "--data") {
       pushDataPart(options, args[++i] ?? "", {
         binary: false,
@@ -245,6 +253,7 @@ export function parseOptions(args: string[]): CurlOptions | ExecResult {
     } else if (arg === "-I" || arg === "--head") {
       options.headOnly = true;
       options.method = "HEAD";
+      explicitMethod = true;
     } else if (arg === "-i" || arg === "--include") {
       options.includeHeaders = true;
     } else if (arg === "-s" || arg === "--silent") {
@@ -256,10 +265,33 @@ export function parseOptions(args: string[]): CurlOptions | ExecResult {
     } else if (arg === "-L" || arg === "--location") {
       options.followRedirects = true;
     } else if (arg === "--max-redirs") {
-      // Handled by the network config, skip the value
-      i++;
+      const value = args[++i];
+      if (value === undefined || !/^\d+$/.test(value)) {
+        return {
+          stdout: "",
+          stderr: `curl: option --max-redirs: expected a non-negative integer\n`,
+          exitCode: 2,
+        };
+      }
+      const parsed = Number(value);
+      if (!Number.isSafeInteger(parsed)) {
+        return {
+          stdout: "",
+          stderr: `curl: option --max-redirs: value is out of range\n`,
+          exitCode: 2,
+        };
+      }
+      options.maxRedirects = parsed;
     } else if (arg.startsWith("--max-redirs=")) {
-      // Handled by the network config
+      const value = arg.slice(13);
+      if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+        return {
+          stdout: "",
+          stderr: `curl: option --max-redirs: expected a non-negative integer\n`,
+          exitCode: 2,
+        };
+      }
+      options.maxRedirects = Number(value);
     } else if (arg === "-w" || arg === "--write-out") {
       options.writeOut = args[++i];
     } else if (arg.startsWith("--write-out=")) {
@@ -287,6 +319,7 @@ export function parseOptions(args: string[]): CurlOptions | ExecResult {
           case "I":
             options.headOnly = true;
             options.method = "HEAD";
+            explicitMethod = true;
             break;
           case "i":
             options.includeHeaders = true;
@@ -299,7 +332,11 @@ export function parseOptions(args: string[]): CurlOptions | ExecResult {
             break;
           case "G":
             options.getMode = true;
+<<<<<<< HEAD
             options.method = "GET";
+=======
+            if (!explicitMethod) options.method = "GET";
+>>>>>>> @just-bash/executor@3.0.0
             break;
           default:
             return unknownOption("curl", `-${c}`);
@@ -312,7 +349,11 @@ export function parseOptions(args: string[]): CurlOptions | ExecResult {
 
   // Data/form options imply POST when no explicit method was set. `-G`/`--get`
   // keeps the request a GET and sends the payload as a query string instead.
+<<<<<<< HEAD
   if (impliesPost && options.method === "GET" && !options.getMode) {
+=======
+  if (impliesPost && !explicitMethod && !options.getMode) {
+>>>>>>> @just-bash/executor@3.0.0
     options.method = "POST";
   }
 
