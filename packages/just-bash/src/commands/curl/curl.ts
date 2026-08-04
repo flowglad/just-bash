@@ -8,9 +8,17 @@
 import { fromBuffer } from "../../fs/encoding.js";
 import { getErrorMessage } from "../../interpreter/helpers/errors.js";
 import { _Headers } from "../../security/trusted-globals.js";
-import type { Command, CommandContext, ExecResult } from "../../types.js";
+import type {
+  ExecResult,
+  RuntimeCommand,
+  RuntimeCommandContext,
+} from "../../types.js";
 import { hasHelpFlag, showHelp } from "../help.js";
+<<<<<<< HEAD
 import { encodeRfc3986, generateMultipartBody } from "./form.js";
+=======
+import { encodeCurlData, generateMultipartBody } from "./form.js";
+>>>>>>> @just-bash/executor@3.0.0
 import { curlHelp } from "./help.js";
 import { parseOptions } from "./parse.js";
 import {
@@ -36,7 +44,11 @@ import type { CurlOptions } from "./types.js";
  */
 async function resolveData(
   options: CurlOptions,
+<<<<<<< HEAD
   ctx: CommandContext,
+=======
+  ctx: RuntimeCommandContext,
+>>>>>>> @just-bash/executor@3.0.0
 ): Promise<string | undefined> {
   if (options.dataParts.length === 0) return undefined;
   const parts: string[] = [];
@@ -49,7 +61,11 @@ async function resolveData(
       } else if (part.file.mode === "binary") {
         parts.push(content);
       } else {
+<<<<<<< HEAD
         const encoded = encodeRfc3986(content);
+=======
+        const encoded = encodeCurlData(content);
+>>>>>>> @just-bash/executor@3.0.0
         parts.push(part.file.name ? `${part.file.name}=${encoded}` : encoded);
       }
     } else {
@@ -65,7 +81,11 @@ async function resolveData(
  */
 async function prepareRequestBody(
   options: CurlOptions,
+<<<<<<< HEAD
   ctx: CommandContext,
+=======
+  ctx: RuntimeCommandContext,
+>>>>>>> @just-bash/executor@3.0.0
   resolvedData: string | undefined,
 ): Promise<{ body?: string; contentType?: string }> {
   // Handle -T/--upload-file
@@ -119,8 +139,21 @@ async function prepareRequestBody(
 
 function appendDataToUrl(url: string, data: string | undefined): string {
   if (!data) return url;
+<<<<<<< HEAD
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}${data}`;
+=======
+  const hashIndex = url.indexOf("#");
+  const base = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const fragment = hashIndex === -1 ? "" : url.slice(hashIndex);
+  const separator =
+    base.endsWith("?") || base.endsWith("&")
+      ? ""
+      : base.includes("?")
+        ? "&"
+        : "?";
+  return `${base}${separator}${data}${fragment}`;
+>>>>>>> @just-bash/executor@3.0.0
 }
 
 /**
@@ -150,7 +183,7 @@ function prepareHeaders(options: CurlOptions, contentType?: string): Headers {
 async function saveCookies(
   options: CurlOptions,
   headers: Record<string, string>,
-  ctx: CommandContext,
+  ctx: RuntimeCommandContext,
 ): Promise<void> {
   if (!options.cookieJar) return;
 
@@ -226,10 +259,13 @@ function buildOutput(
   return output;
 }
 
-export const curlCommand: Command = {
+export const curlCommand: RuntimeCommand = {
   name: "curl",
 
-  async execute(args: string[], ctx: CommandContext): Promise<ExecResult> {
+  async execute(
+    args: string[],
+    ctx: RuntimeCommandContext,
+  ): Promise<ExecResult> {
     if (hasHelpFlag(args)) {
       return showHelp(curlHelp);
     }
@@ -289,6 +325,8 @@ export const curlCommand: Command = {
         body,
         followRedirects: options.followRedirects,
         timeoutMs: options.timeoutMs,
+        maxRedirects: options.maxRedirects,
+        signal: ctx.signal,
       });
 
       // Save cookies if requested
